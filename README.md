@@ -2,12 +2,13 @@
 
 * In this repository, I implement some Markov Chain Monte Carlo (MCMC) algorithms and Bayesian Dynamic Models using R. The purpose is to study and better understand them. Implementations are not expected to be optimized, but they can serve as a starting point.
 
+## MCMC methods
 - [rejection_sampling.R](rejection_sampling.R): Simple rejection sampling. Samples from a target distribution (normalization is not required) using the uniform distribution as the envelope function.
 - [adaptive_rejection_sampling.R](adaptive_rejection_sampling.R): Adaptive rejection sampling (tangent method) of Gilks and Wild (1992). Requires log-concave target density.
 - [metropolis.R](metropolis.R): Random walking metropolis method.
 - [augmented_data.R](augmented_data.R): Implementation of the Linkage Model example using Data Augmentation / Substitution algorithm of Tanner and Wong (1987).
 
-# State Space Dynamic Models
+## State Space Dynamic Models
 - [poisson_local_level_naive_gibbs.R](poisson_local_level_naive_gibbs.R): Poisson local level model using naive Gibbs Sampling. 
 - [poisson_local_level_cwmh.R](poisson_local_level_cwmh.R): Poisson local level model using the Component Wise Metropolis Hastings (CWMH) proposal of Montoril, Correia and Migon (2022).
 - [poisson_local_level_sim.R](poisson_local_level_sim.R): Simulation of a Poisson local level model time series.
