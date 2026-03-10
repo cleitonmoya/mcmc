@@ -1,4 +1,4 @@
-# Poisson Local Level Model simulation
+# Poisson with Sin Level Model simulation
 # Author: Cleiton Moya de Almeida
 
 #####
@@ -8,34 +8,23 @@ cat("\014")         # clear the console
 
 # change de directory to the same of the current file
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
-filename <- "local_level1" # csv file to save the data
+filename <- "sin_level" # csv file to save the data
 
 set.seed(42)
 
-theta <- log(3) # theta_0
-W2 <- 0.03      # state variance W^2
 Tt <- 200       # number of observations
-
-y_sim <- numeric(Tt)
-theta_sim <- numeric(Tt)
-
-for (t in 1:Tt) {
-    theta <- theta + rnorm(1, mean=0, sd=sqrt(W2))
-    y <- rpois(1, exp(theta))
-
-    theta_sim[t] <- theta
-    y_sim[t] <- y
-}
+theta_sim <- sin(2*pi*seq_len(Tt)/(Tt))
+y_sim <- rpois(Tt, exp(theta_sim))
 
 #####
 # Save the data
 df <- data.frame(y_sim, theta_sim)
 write.table(df, file = paste("data/", filename, ".csv", sep=""),
-            row.names=FALSE, col.names=c("y", "theta"))
+            row.names=FALSE, col.names=c("y", "theta1"))
 
+#####
 x <- 1:Tt
 par(mar = c(4, 4, 2, 4)) # bottom left, top, right
 plot(x, y_sim, type="l", col="gray", xlab="t", ylab=expression(y[t]))
 points(x, y_sim, pch = 20)
 lines(x, exp(theta_sim), col="red")
-

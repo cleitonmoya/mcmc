@@ -1,4 +1,4 @@
-# Poisson Local Level Model
+# Poisson - 2nd Order Polynomial Dynamic Model
 # MCMC: Precision Based & Component Wise Metropolis
 # Reference:
 # Montoril, Michel H., Leandro T. Correia, e Helio S. Migon.
@@ -19,11 +19,11 @@ tp <- Matrix::t     # matrix transpose alias
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source <- "sim1" # csv file with data
+source <- "pol2_sim1" # csv file with data
 df <- read.table(paste("data/", source, ".csv", sep=""), header = TRUE)
 y <- df$y
-theta_true <- df$mu
-
+theta1_true <- df$theta1
+theta2_true <- df$theta2
 Tt <- length(y) # dimension T
 
 # Print auxiliary function

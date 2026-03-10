@@ -1,28 +1,21 @@
 # Poisson Local Level Model
-# MCMC: Precision Based & Component Wise Metropolis
-# Reference:
-# Montoril, Michel H., Leandro T. Correia, e Helio S. Migon.
-#     “Bayesian Estimation of Dynamic Weights in Gaussian Mixture Models”.
-#      arXiv:2104.03395. Preprint, arXiv, 2022.
-#      https://doi.org/10.48550/arXiv.2104.03395.
+# MCMC: naive Gibbs Sampling
 # Author: Cleiton Moya de Almeida
-
-library(Matrix)     # to deal with band sparse matrix
 
 graphics.off()      # close the plots
 rm(list = ls())     # clear the environment
 cat("\014")         # clear the console
-set.seed(20)
+set.seed(42)
 tp <- Matrix::t     # matrix transpose alias
 
 # Change de directory to the same of the current file
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source <- "sim1" # csv file with data
+source <- "sin_level" # csv file with data
 df <- read.table(paste("data/", source, ".csv", sep=""), header = TRUE)
 y <- df$y
-theta_true <- df$mu
+theta_true <- df$theta1
 
 Tt <- length(y) # dimension T
 
@@ -32,22 +25,30 @@ printf <- function(...) {
     return(cat(x))
 }
 
-# H band matrix (TxT)
-H <- bandSparse(Tt, Tt, k = c(0, -1),
-                diagonals = list(rep(1, Tt), rep(-1, Tt-1)))
-
-# Full conditional posterior for theta_t
-logpost_theta_t <- function(theta_t, yt, mu_t_star, tau2_t_star) {
+# Full conditional log-posterior for theta_t, t=1, ..., T-1
+# theta_tm1: theta_{t-1}
+# theta_tp1: theta_{t+1}
+logpost_theta_t <- function(theta_t, theta_tm1, theta_tp1, yt, W) {
     p1 <- yt*theta_t - exp(theta_t) # log-likelihood
-    p2 <- -(theta_t-mu_t_star)^2/(2*tau2_t_star)
-    p <- p1 + p2
-    return(p)
+    p2 <- -(theta_t - theta_tm1)^2/(2*W)
+    p3 <- -(theta_tp1 - theta_t)^2/(2*W)
+    logp <- p1+p2+p3
+    return(logp)
+}
+
+# Full conditional log-posterior for theta_T (t=T)
+logpost_theta_T <- function(theta_t, theta_tm1, yt, W) {
+    p1 <- yt*theta_t - exp(theta_t) # log-likelihood
+    p2 <- -(theta_t - theta_tm1)^2/(2*W)
+    logp <- p1+p2
+    return(logp)
 }
 
 
 # Sample theta_t ~ logpost_theta_t (Metropolis step)
-sample_theta_t <- function(theta_t_current, mu_t_star, tau2_t_star,
-                           varsigma2, yt) {
+# final_t: boolean (0: t<T; 1: t=T)
+sample_theta_t <- function(theta_t_current, theta_tm1, theta_tp1,
+                           yt, W, varsigma2, final_t) {
 
     # proposed theta
     theta_t_prop <- rnorm(1, mean=theta_t_current, sd=sqrt(varsigma2))
@@ -55,8 +56,15 @@ sample_theta_t <- function(theta_t_current, mu_t_star, tau2_t_star,
     # acceptance/rejection step
     ac <- 0 # accepted flag
     logu <- log(runif(1))
-    logp1 <- logpost_theta_t(theta_t_prop, yt, mu_t_star, tau2_t_star)
-    logp2 <- logpost_theta_t(theta_t_current, yt, mu_t_star, tau2_t_star)
+
+    if (final_t) {
+        logp1 <- logpost_theta_T(theta_t_prop, theta_tm1, yt, W)
+        logp2 <- logpost_theta_T(theta_t_current, theta_tm1, yt, W)
+    } else {
+        logp1 <- logpost_theta_t(theta_t_prop, theta_tm1, theta_tp1, yt, W)
+        logp2 <- logpost_theta_t(theta_t_current, theta_tm1, theta_tp1, yt, W)
+    }
+
     logr <- logp1 - logp2
 
     # acceptance criteria
@@ -76,14 +84,14 @@ sample_theta_t <- function(theta_t_current, mu_t_star, tau2_t_star,
 # Prior hyperparameters
 # theta_0 ~ N(mu_0, sigma2_0)
 vartheta_init <- log(y + 0.5)  # +0.5 to avoid log(0)
-mu_0 <- mean(vartheta_init)    # suggested by Claude
-sigma2_0 <- 3
+mu_0 <- y[1] # mean(vartheta_init)     # suggested by Claude
+sigma2_0 <- 10
 
 # phi = W^(-1) ~ Gamma(nu_0, eta_0)
 nu_0 <- 0.01
 eta_0 <- 0.01
 
-N <- 3000           # Number of steps
+N <- 5000           # Number of steps
 varsigma2 <- 0.07   # Random walkikng variance hyperparameter
 burnin <- 200       # Number of burn-in steps
 
@@ -96,7 +104,7 @@ theta_0_hist <-numeric(N)
 # Gibbs sampling
 
 # Initialization
-W <- var(diff(vartheta_init)) # suggested by Claude
+W <- 0.3 #var(diff(vartheta_init)) # suggested by Claude
 vartheta <- as.matrix(vartheta_init)
 phi <- 1/W
 
@@ -111,14 +119,11 @@ for (n in 1:N) {
     sigma2_0_bar <- (1/sigma2_0 +1/W)^(-1)
     mu_0_bar <- sigma2_0_bar*(mu_0/sigma2_0 + vartheta[1]/W)
     theta_0 <- rnorm(1, mean=mu_0_bar, sd=sqrt(sigma2_0_bar))
-    mu <- as.matrix(theta_0*rep(1, Tt))
 
-    # 2. Sample phi (W)
+    # 2. Sample phi (W^(-1))
     nu_0_bar <- nu_0 + Tt/2
-
-    diff <- vartheta - mu
-    eta_0_bar <- eta_0 + 0.5 * as.numeric(crossprod(H %*% diff))
-
+    diffs <- vartheta - c(theta_0, vartheta[-Tt])
+    eta_0_bar <- eta_0 + 0.5 * sum(diffs^2)
     phi <- rgamma(1, nu_0_bar, eta_0_bar)
     W <- 1/phi
 
@@ -126,21 +131,21 @@ for (n in 1:N) {
     n_ac <- 0 # number of accepçted samples for \vartheta
     for (t in 1:Tt) {
 
-        # 3.1 update mu_t_star and tau2_t_star
-        if (t<Tt) {
-            if (t > 1) {
-                mu_t_star <- (vartheta[t+1] + vartheta[t-1])/2
+        # 3.2 sample theta_t (Metropolis)
+        if (t < Tt) {
+            if (t==1) {
+                res <- sample_theta_t(vartheta[t], theta_0, vartheta[t+1],
+                                      y[t], W, varsigma2, final_t=FALSE)
             } else {
-                mu_t_star <- (vartheta[2] + theta_0)/2
+                res <- sample_theta_t(vartheta[t], vartheta[t-1], vartheta[t+1],
+                                      y[t], W, varsigma2, final_t=FALSE)
             }
-            tau2_t_star <- W/2
+
         } else {
-            mu_t_star <- vartheta[t-1]
-            tau2_t_star <- W
+            res <- sample_theta_t(vartheta[t], vartheta[t-1], NULL,
+                                  y[t], W, varsigma2, final_t=TRUE)
         }
 
-        # 3.2 sample theta_t (Metropolis)
-        res <- sample_theta_t(vartheta[t], mu_t_star, tau2_t_star, varsigma2, y[t])
         vartheta[t] <- res$theta_t
         ac <- res$ac # flag: sample accpeted(1) or not (0)
         n_ac <- n_ac + ac
@@ -166,8 +171,10 @@ printf("Mean acception ratio of theta: %.2f", mean(ac_vartheta_hist))
 # Posterior mean
 theta_mean <- colMeans(vartheta_hist[-(1:burnin), ])
 lambda_mean <- exp(theta_mean)
-printf("W mean: %.2f", mean(W_hist))
-
+W_mean <- mean(W_hist[-(1:burnin)])
+W_median <- median(W_hist[-(1:burnin)])
+printf("W mean: %.2f", W_mean)
+printf("W median: %.2f", W_median)
 
 #####
 # Plots
@@ -206,7 +213,7 @@ lines(density(W_hist[-(1:burnin)]), col = "blue", lwd = 2)
 
 #####
 # Traceplot for W
-plot(W_hist, type="l", xlab="n", ylab="W", main="Traceplot of W")
+plot(W_hist[-(1:100)], type="l", xlab="n", ylab="W", main="Traceplot of W")
 
 #####
 # Traceplots for theta_t
