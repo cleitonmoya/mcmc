@@ -9,13 +9,13 @@
 - [poisson_sin_level_sim.R](poisson_sin_level_sim.R): Data simulation with sin level.
 - [poisson_local_level_mh_gibbs.R](poisson_local_level_mh_gibbs.R): Metropolis within Gibbs (Geweke and Tanikazi, 2001). 
 - [poisson_local_level_cwmh.R](poisson_local_level_cwmh.R): Component Wise Metropolis Hastings (CWMH) (Montoril, Correia and Migon 2022).
-- [poisson_local_level_stan.R](poisson_local_level_cwmh.R): Simulation with [https://mc-stan.org/rstan/](Rstan)
+- [poisson_local_level_stan.R](poisson_local_level_cwmh.R): Simulation with [Stan](https://mc-stan.org/rstan/)
 - [poisson_pol2.stan](poisson_local_level.stan): Stan model
 
 ### Poisson Second Order Polynomial Model
 - [poisson_pol2_sim.R](poisson_local_level_sim.R): Data simulation
 - [poisson_pol2_mh_gibbs.R](poisson_pol2_mh_gibbs.R): Metropolis within Gibbs (Geweke and Tanikazi, 2001).
-- [poisson_pol2_stan.R](poisson_local_level_cwmh.R): Simulation with [https://mc-stan.org/rstan/](Rstan) (NUTS)
+- [poisson_pol2_stan.R](poisson_local_level_cwmh.R): Simulation with [Stan](https://mc-stan.org/rstan/) (NUTS)
 - [poisson_pol2.stan](poisson_pol2.stan): Stan model
 - [poisson_schnatter.R](poisson_schnatter.R): Gibbs with data augmentation (Frühwirth-Schnatter and Wagner, 2006)
  
