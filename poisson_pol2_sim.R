@@ -8,14 +8,14 @@ cat("\014")         # clear the console
 
 # change de directory to the same of the current file
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
-filename <- "pol2_sim1" # csv file to save the data
+filename <- "teste" # csv file to save the data
 
 set.seed(42)
 
 theta1 <- 2.5  # theta_01
 theta2 <- 0.05 # theta_02
 W1 <- 0.03     # state variance W1
-W2 <- 0.00003   # state variance W2
+W2 <- 0.00003  # state variance W2
 Tt <- 300      # number of observations
 
 y_sim <- numeric(Tt)

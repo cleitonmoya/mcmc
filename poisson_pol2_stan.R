@@ -17,6 +17,9 @@ printf <- function(...) {
 options(mc.cores = parallel::detectCores())  # paralelizar chains
 rstan_options(auto_write = TRUE)             # recompila só se o .stan mudar
 
+# Change de directory to the same of the current file
+setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
+
 # Load the data
 source <- "pol2_sim1" # csv file with data
 df <- read.table(paste("data/", source, ".csv", sep=""), header = TRUE)
@@ -35,8 +38,8 @@ lambda_true <- exp(theta1_true)
 model <- readRDS("poisson_pol2.rds")
 
 stan_data <- list(
-    T        = Tt,
-    y        = y,
+    T         = Tt,
+    y         = y,
     mu_01     = y[1],       # theta_01 ~ N(mu_01, sigma2_01)
     sigma2_01 = 10,
     nu_01     = 0.01,       # phi_01   ~ Gamma(nu_01, eta_01)

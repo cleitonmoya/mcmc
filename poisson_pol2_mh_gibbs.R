@@ -252,7 +252,7 @@ printf("W2 median: %.5f", median(W2_hist))
 #####
 # Plots
 # y, lambda_true, lambda_estimated
-lambda_true = exp(theta1_true)
+lambda_true <- exp(theta1_true)
 x <- 1:Tt
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
 plot(x, y, type="l", xlab="t", ylab="", col="gray",
