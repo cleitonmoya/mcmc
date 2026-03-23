@@ -7,12 +7,14 @@
 # Author: Cleiton Moya de Almeida
 
 library(Rfast)      # provide colMedians()
+library(coda)
 
 graphics.off()      # close the plots
 rm(list = ls())     # clear the environment
 cat("\014")         # clear the console
 set.seed(42)
 tp <- Matrix::t     # matrix transpose alias
+options(error = function() traceback(2)) # more informative traceback
 
 # Change de directory to the same of the current file
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
@@ -114,7 +116,7 @@ eta_01 <- 0.01
 nu_02  <- 0.01
 eta_02 <- 0.01
 
-N <- 10000           # Number of steps
+N <- 11000           # Number of steps
 varsigma2 <- 0.07    # Random walkikng variance hyperparameter
 burnin <- 1000       # Number of burn-in steps
 
@@ -151,6 +153,12 @@ theta_02 <- 0.01
  # Main loop
 start_time = proc.time() # execution time
 for (n in 1:N) {
+
+    if (n %% 1000 == 0) {
+        time <- proc.time()
+        elapsed_time <- (time - start_time)[[3]]
+        printf("Iteration %d / %d | Elapsed time: %.0f s", n, N, elapsed_time)
+    }
 
     # Sample theta_01
     sigma2_01_bar <- (1/sigma2_01 + 1/W1)^(-1)
@@ -245,9 +253,43 @@ theta1_mean <- colMeans(vartheta1_hist[-(1:burnin), ])
 theta2_mean <- colMeans(vartheta2_hist[-(1:burnin), ])
 theta2_median <- colMedians(vartheta2_hist[-(1:burnin), ])
 lambda_mean <- exp(theta1_mean)
-printf("W1 mean: %.3f", mean(W1_hist))
-printf("W2 mean: %.5f", mean(W2_hist))
-printf("W2 median: %.5f", median(W2_hist))
+printf("W1 mean: %.3f", mean(W1_hist[-(1:burnin)]))
+printf("W2 mean: %.5f", mean(W2_hist[-(1:burnin)]))
+printf("W2 median: %.5f", median(W2_hist[-(1:burnin)]))
+
+
+# Effective sample size ####
+printf("Effective Sample Size:")
+ess_w1 <- effectiveSize(mcmc(W1_hist[-(1:burnin)]))
+ess_w2 <- effectiveSize(mcmc(W2_hist[-(1:burnin)]))
+printf("\tW1: %.0f", ess_w1)
+printf("\tW2: %.0f", ess_w2)
+
+for (t in c(50, 100, 200, 250)) {
+    ess <- effectiveSize(mcmc(vartheta1_hist[-(1:burnin),t]))
+    printf("\ttheta %d,1: %0.f", t, ess)
+}
+
+for (t in c(50, 100, 200, 250)) {
+    ess <- effectiveSize(mcmc(vartheta2_hist[-(1:burnin),t]))
+    printf("\ttheta %d,2: %0.f", t, ess)
+}
+
+# Effective sample size / elapsed time ####
+printf("Effective Sample Size / second:")
+printf("\tW1: %.2f", ess_w1/elapsed_time)
+printf("\tW2: %.2f", ess_w2/elapsed_time)
+
+for (t in c(50, 100, 200, 250)) {
+    ess <- effectiveSize(mcmc(vartheta1_hist[-(1:burnin),t]))
+    printf("\ttheta %d,1: %.2f", t, ess/elapsed_time)
+}
+
+for (t in c(50, 100, 200, 250)) {
+    ess <- effectiveSize(mcmc(vartheta2_hist[-(1:burnin),t]))
+    printf("\ttheta %d,2: %.2f", t, ess/elapsed_time)
+}
+
 
 #####
 # Plots
@@ -269,10 +311,10 @@ legend("topright",
        bty = "n")
 
 
-# y, theta2_true, theta2_mean ####
+# y, theta1_true, theta1_mean ####
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
-plot(x, theta2_mean, type="l")
-lines(x, theta2_true, col="blue", lwd="2")
+plot(x, theta1_mean, type="l", ylab="", col="blue", lwd=2)
+lines(x, theta1_true)
 legend("topright",
        legend = expression(theta[t2], hat(theta)[t2]),
        col = c("black", "blue"),
@@ -281,19 +323,31 @@ legend("topright",
        bty = "n")
 
 
-#####
-# Posterior distribution of theta_t1
+# y, theta2_true, theta2_mean ####
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
+plot(x, theta2_mean, type="l", ylab="", col="blue", lwd=2)
+lines(x, theta2_true)
+legend("topright",
+       legend = expression(theta[t2], hat(theta)[t2]),
+       col = c("black", "blue"),
+       lty = c(1, 1),
+       lwd = c(1, 2),
+       bty = "n")
+
+
+# Posterior distribution of theta_t1 ####
 par(mfrow = c(2, 2))
-for (t in c(10, 50, 100, 150)) {
+for (t in c(50, 100, 200, 250)) {
     hist(vartheta1_hist[-(1:burnin), t], breaks = 50, freq = FALSE,
          xlab = bquote(theta[.(t) * "," * 1]),
          main = bquote("Posterior of " * theta[.(t) * "," * 1]))
     lines(density(vartheta1_hist[-(1:burnin), t]), col = "blue", lwd = 2)
 }
 
-# Posterior distribution of theta_t2
+
+# Posterior distribution of theta_t2 ####
 par(mfrow = c(2, 2))
-for (t in c(10, 50, 100, 150)) {
+for (t in c(50, 100, 200, 250)) {
     hist(vartheta2_hist[-(1:burnin), t], breaks = 50, freq = FALSE,
          xlab = bquote(theta[.(t) * "," * 2]),
          main = bquote("Posterior of " * theta[.(t) * "," * 2]))
@@ -301,39 +355,39 @@ for (t in c(10, 50, 100, 150)) {
 }
 
 
-#####
-# Posterior distribution of W1
+# Posterior distribution of W1 ####
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
 hist(W1_hist[-(1:burnin)], breaks = 50, freq = FALSE, main ="Posterior of W1")
 lines(density(W1_hist[-(1:burnin)]), col = "blue", lwd = 2)
 
-# Posterior distribution of W2
+
+# Posterior distribution of W2 ####
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
 hist(W2_hist[-(1:burnin)], breaks = 50, freq = FALSE, main ="Posterior of W2")
 lines(density(W2_hist[-(1:burnin)]), col = "blue", lwd = 2)
 
-#####
-# Traceplot for W1 and W2
+
+# Traceplot for W1 and W2 ####
 par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex = 0.8)
 plot(W1_hist[-(1:100)], type="l", xlab="n", ylab="W", main="Traceplot of W1")
 plot(W2_hist[-(1:100)], type="l", xlab="n", ylab="W", main="Traceplot of W2")
 
-#####
-# Traceplots for theta_t1
+
+# Traceplots for theta_t1 ####
 par(mfrow = c(2, 2))
-for (t in c(10, 50, 100, 150)) {
+for (t in c(50, 100, 200, 250)) {
     plot(vartheta1_hist[, t], type="l", main=bquote(theta[.(t)*","*1]), xlab="", ylab="")
 }
 
-# Traceplots for theta_t2
+
+# Traceplots for theta_t2 ####
 par(mfrow = c(2, 2))
-for (t in c(10, 50, 100, 150)) {
+for (t in c(50, 100, 200, 250)) {
     plot(vartheta2_hist[, t], type="l", main=bquote(theta[.(t)*","*2]), xlab="", ylab="")
 }
 
 
-#####
-# Traceplot of acceptance ratio of theta_t1
+# Traceplot of acceptance ratio of theta_t1 ####
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
 plot(ac_hist, type="l", xlab="n", ylab="ratio",
      main=expression("Acceptance ratio of " * theta[t*1]))

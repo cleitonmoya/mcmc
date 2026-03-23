@@ -7,9 +7,20 @@ set.seed(42)
 tp <- base::t       # alias to transpose function
 options(error = function() traceback(2)) # more informative traceback
 
-T <- 200
 
-V <- 3
+# Change de directory to the same of the current file
+setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
+
+# Load the data
+source <- "normal_pol2_sim1" # csv file with data
+df <- read.table(paste("../data/", source, ".csv", sep=""), header = TRUE)
+y <- df$y
+theta1_true <- df$theta1
+theta2_true <- df$theta2
+T <- length(y)
+
+
+V <- 0.5
 W <- matrix(c(1, 0, 0, 1), nrow=2)
 
 theta_t1 <- 1
@@ -19,23 +30,10 @@ W2 <- 0.03
 
 theta1 <- numeric(T)
 theta2 <- numeric(T)
-y <- numeric(T)
-
-# Simulation
-for (t in 1:T) {
-
-    theta_t1 <- theta_t1 + theta_t2 + rnorm(1, mean=0, sd=sqrt(W1))
-    theta_t2 <-            theta_t2 + rnorm(1, mean=0, sd=sqrt(W2))
-    y_t <- theta_t1 + rnorm(1, mean=0, sd=sqrt(V))
-
-    y[t] <- y_t
-    theta1[t] <- theta_t1
-    theta2[t] <- theta_t2
-}
 
 F <- matrix(c(1, 0), nrow=2)
 G <- matrix(c(1, 1, 0, 1), nrow=2, byrow=TRUE)
-W <- diag(c(W1, W2))
+W <- diag(c(W1, W2), nrow=2, ncol=2)
 theta <- cbind(theta1, theta2)
 
 
@@ -44,8 +42,8 @@ mu_01     <- y[1]
 sigma2_01 <- 10
 
 # theta_02 ~ N(mu_2, sigma2_02)
-mu_02     <- 0.1
-sigma2_02 <- 1
+mu_02     <- 0.01
+sigma2_02 <- 10
 
 # Forward Filtering
 
@@ -56,7 +54,7 @@ C <- array(data=NA, dim=c(2,2,T))
 B <- array(data=NA, dim=c(2,2,T))
 
 m_t <- as.matrix(c(mu_01, mu_02))
-C_t <- diag(c(sigma2_01, sigma2_02))
+C_t <- diag(c(sigma2_01, sigma2_02), nrow=2, ncol=2)
 
 for (t in 1:T) {
 
@@ -100,19 +98,22 @@ for (t in seq(T-1,1)) {
 }
 
 
-#####
+
 x <- 1:T
 
-# theta1 filtered
-plot(x, theta1, type="l")
+#####
+# theta1 filtered ####
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
+plot(x, theta1_true, type="l", xlab="t", ylab="")
 lines(x, m[1,,], col="blue")
 polygon(c(x, rev(x)),
         c(m[1,,] + 3*sqrt(C[1,1,]), rev(m[1,,] - 3*sqrt(C[1,1,]))),
         col = adjustcolor("steelblue", alpha.f = 0.3),
         border = NA)
 
-# theta1 smoothed
-plot(x, theta1, type="l")
+
+# theta1 smoothed ####
+plot(x, theta1_true, type="l", xlab="t", ylab="")
 lines(x, a_star[1,,], col="blue")
 polygon(c(x, rev(x)),
         c(a_star[1,,] + 3*sqrt(R_star[1,1,]),
@@ -121,15 +122,17 @@ polygon(c(x, rev(x)),
         border = NA)
 
 
-#####
-plot(x, theta2, type="l",  ylim=c(-2,3))
+# theta2 filtered #####
+plot(x, theta2_true, type="l", xlab="t", ylab="")
 lines(x, m[2,,], col="blue")
 polygon(c(x, rev(x)),
         c(m[2,,] + 3*sqrt(C[2,2,]), rev(m[2,,] - 3*sqrt(C[2,2,]))),
         col = adjustcolor("steelblue", alpha.f = 0.3),
         border = NA)
 
-plot(x, theta2, type="l", ylim=c(-2,3))
+
+# theta2 smoothed ####
+plot(x, theta2_true, type="l", xlab="t", ylab="")
 lines(x, a_star[2,,], col="blue")
 polygon(c(x, rev(x)),
         c(a_star[2,,] + 3*sqrt(R_star[2,2,]),

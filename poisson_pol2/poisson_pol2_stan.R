@@ -56,15 +56,17 @@ fit <- sampling(
     object = model,
     data   = stan_data,
     chains = 1,
-    iter   = 10000,
+    iter   = 11000,
     warmup = burnin,
     thin   = 1,
     seed   = 42
 )
-elapsed_time <- get_elapsed_time(fit)
+warmup_time <- get_elapsed_time(fit)[1, 1]
+sample_time <- get_elapsed_time(fit)[1, 2]
+elapsed_time <- warmup_time + sample_time
+
 
 # Results ####
-
 samples <- extract(fit, inc_warmup = TRUE)
 sampler_params <- get_sampler_params(fit, inc_warmup = TRUE)
 ac_hist <- sampler_params[[1]][, "accept_stat__"]
@@ -92,8 +94,28 @@ print(fit, pars = c("W1", "W2",
       probs = c(0.25, 0.5, 0.75))
 printf("W2 mean: %.5f", W2_mean)
 
+# Effective sample size / elapsed time ####
+s <- summary(fit)$summary
+ess_bulk <- s[, "n_eff"]
+ess_per_sec <- ess_bulk / elapsed_time
+
+ess_per_sec_w1 <- ess_per_sec[["W1"]]
+
+printf("Effective Sample Size / second:")
+printf("\tW1: %.2f", ess_per_sec[["W1"]])
+printf("\tW2: %.2f", ess_per_sec[["W2"]])
+
+for (t in c(50, 100, 200, 250)) {
+    printf("\ttheta1[%d]: %.2f", t, ess_per_sec[[sprintf("theta1[%d]", t)]])
+}
+
+for (t in c(50, 100, 200, 250)) {
+    printf("\ttheta2[%d]: %.2f", t, ess_per_sec[[sprintf("theta2[%d]", t)]])
+}
+
+
 # Plots #####
-# y, lambda_true, lambda_estimated
+# y, lambda_true, lambda_mean
 x <- 1:Tt
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
 plot(x, y, type="l", xlab="t", ylab="", col="gray",
@@ -110,10 +132,21 @@ legend("topright",
        bty = "n")
 
 
-# y, theta2_true, theta2_mean ####
+# theta1_true, theta1_mean ####
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
-plot(x, theta2_mean, type="l")
-lines(x, theta2_true, col="blue", lwd="2")
+plot(x, theta1_mean, type="l", col="blue", lwd="2")
+lines(x, theta1_true)
+legend("topright",
+       legend = expression(theta[t1], hat(theta)[t1]),
+       col = c("black", "blue"),
+       lty = c(1, 1),
+       lwd = c(1, 2),
+       bty = "n")
+
+# theta2_true, theta2_mean ####
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
+plot(x, theta2_mean, type="l", col="blue", lwd="2")
+lines(x, theta2_true)
 legend("topright",
        legend = expression(theta[t2], hat(theta)[t2]),
        col = c("black", "blue"),

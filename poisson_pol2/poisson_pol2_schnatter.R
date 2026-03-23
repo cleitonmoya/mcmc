@@ -10,6 +10,8 @@
 
 # Author: Cleiton Moya de Almeida
 
+library(coda)
+
 graphics.off()      # close the plots
 rm(list = ls())     # clear the environment
 cat("\014")         # clear the console
@@ -35,6 +37,17 @@ printf <- function(...) {
     return(cat(x))
 }
 
+inv2x2 <- function(M) {
+    det_M <- M[1,1]*M[2,2] - M[1,2]*M[2,1]
+    inv <- matrix(c(M[2,2], -M[2,1], -M[1,2], M[1,1]), 2, 2) / det_M
+    return(inv)
+}
+
+rmvn_chol <- function(mu, Sigma) {
+    L <- chol(Sigma)
+    mu + drop(tp(L) %*% rnorm(length(mu)))
+}
+
 # Normal mixture for \epsilon_{tj} ~ Gumbel(0,1) approximation (from paper)
 mix_params <- matrix(
     c(0.00397, 5.09,   4.50,
@@ -48,27 +61,30 @@ mix_params <- matrix(
       0.107,  -0.673,  0.0947,
       0.088,  -1.06,   0.146),
     nrow = 10, byrow = TRUE,
-    dimnames = list(paste0("r=", 1:10), c("w", "m", "s2"))
+    dimnames = list(NULL, c("w", "m", "s2"))
 )
 R_mix <- nrow(mix_params)
-
+w_vec  <- mix_params[, "w"]
+m_vec  <- mix_params[, "m"]
+s2_vec <- mix_params[, "s2"]
+inv_s2 <- 1 / s2_vec
+sqrt_s2 <- sqrt(s2_vec)
 
 # Forward Filtering (Kalman Filter)
 forward_filter <- function(mu_01, sigma2_01, mu_02, sigma2_02,
                            F, G, W, S, y_tilde) {
     m_t <- as.matrix(c(mu_01, mu_02))
-    C_t <- diag(c(sigma2_01, sigma2_02))
+    C_t <- diag(c(sigma2_01, sigma2_02), nrow=2, ncol=2)
 
     a <- array(data=NA, dim=c(2,1,T))
     R <- array(data=NA, dim=c(2,2,T))
     m <- array(data=NA, dim=c(2,1,T))
     C <- array(data=NA, dim=c(2,2,T))
-    B <- array(data=NA, dim=c(2,2,T))
 
     for (t in 1:T) {
 
         # Sufficient scalar observations
-        s2_t    <- unname(mix_params[S[[t]], "s2"])
+        s2_t    <- s2_vec[S[[t]]]
         V_hat_t <- 1/sum(1/s2_t)
         y_hat_t <- V_hat_t * sum(y_tilde[[t]]/s2_t)
 
@@ -110,11 +126,11 @@ sample_theta <- function(mu_01, sigma2_01, mu_02, sigma2_02,
     # Compute B_t
     B <- array(data=NA, dim=c(2,2,T))
     for (t in 1:(T-1)) {
-        B[,,t] <- C[,,t] %*% tp(G) %*% solve(R[,,t+1])
+        B[,,t] <- C[,,t] %*% tp(G) %*% inv2x2(R[,,t+1])
     }
 
     # Sample theta_T ~ N[m_T, C_T]
-    theta_t <- as.matrix(MASS::mvrnorm(1, mu=m[,,T], Sigma=C[,,T]))
+    theta_t <- rmvn_chol(mu=m[,,T], Sigma=C[,,T])
     theta[,,T] <- theta_t
 
     # Backward: t = T-1, ..., 1
@@ -123,7 +139,7 @@ sample_theta <- function(mu_01, sigma2_01, mu_02, sigma2_02,
     for (t in seq(T-1, 1)) {
         h_t <- m[,,t] + B[,,t] %*% (theta_t - a[,,t+1])
         H_t <- C[,,t] - B[,,t] %*% R[,,t+1] %*% tp(B[,,t])
-        theta_t <- as.matrix(MASS::mvrnorm(1, mu=h_t, Sigma=H_t))
+        theta_t <- rmvn_chol( mu=h_t, Sigma=H_t)
         theta[,,t] <- theta_t
     }
 
@@ -147,7 +163,7 @@ sample_W <- function(theta, nu_01, eta_01, nu_02, eta_02) {
     eta_bar_02 <- eta_02 + sum(omega_t2^2)/2
     phi2 <- rgamma(1, shape=nu_bar_02, rate=eta_bar_02)
     W2 <- 1/phi2
-    W <- diag(c(W1, W2))
+    W <- diag(c(W1, W2), nrow=2, ncol=2)
 
     return(W)
 }
@@ -167,8 +183,9 @@ sample_tau <- function(theta, y) {
         xi_t <- rexp(1, rate = lambda_t)
 
         if (y_t > 0) {
-            u <- sort(runif(y_t))
-            tau_t <- c(u[1], u[-1]-u[-y_t])
+            e <- rexp(y_t + 1)
+            total_sum <- sum(e)
+            tau_t <- e[1:y_t] / total_sum
             tau_t_ytp1 <- 1 - sum(tau_t) + xi_t
             tau_t <- c(tau_t, tau_t_ytp1)
         } else {
@@ -180,27 +197,28 @@ sample_tau <- function(theta, y) {
     return(tau)
 }
 
+
 sample_S <- function(y, tau, theta) {
     S <- vector("list", T)
     for (t in 1:T) {
         n_t  <- y[t] + 1
         log_lambda_t <- theta[1,,t]          # = theta_{t1}
         S_t  <- integer(n_t)
-        for (j in 1:n_t) {
-            z_tj <- -log(tau[[t]][j]) - log_lambda_t   # = -log(tau_tj) - theta_{t1}
-            v <- numeric(R_mix)
-            for (k in 1:R_mix) {
-                w_k  <- mix_params[k, "w"]
-                m_k  <- mix_params[k, "m"]
-                s2_k <- mix_params[k, "s2"]
-                v[k] <- (w_k/sqrt(s2_k)) * exp(-(z_tj - m_k)^2 / (2*s2_k))
-            }
-            S_t[j] <- sample(1:R_mix, size=1, prob=v/sum(v))
-        }
-        S[[t]] <- S_t
+
+        z_tj <- -log(tau[[t]]) - log_lambda_t          # vector n_t
+
+        # outer: shape (R_mix x n_t)
+        dz <- outer(m_vec, z_tj, "-")                  # m_k - z_tj
+        v_mat  <- (w_vec / sqrt_s2) * exp(-0.5 * dz^2 * inv_s2)
+        v_norm <- matrix(v_mat / rep(colSums(v_mat), each = R_mix), R_mix, n_t)
+
+        cdf <- apply(v_norm, 2, cumsum)                        # (R_mix x n_t)
+        u   <- runif(n_t)
+        S[[t]] <- pmin(colSums(cdf < matrix(u, R_mix, n_t, byrow = TRUE)) + 1L, R_mix)
     }
     return(S)
 }
+
 
 # Simulation parameters
 
@@ -209,7 +227,7 @@ F <- matrix(c(1,0))             # dim = 2x1
 G <- rbind(c(1, 1), c(0, 1))    # dim = 2x2
 W1 <- 1                         # W_01
 W2 <- 0.1                       # W_02
-W <- diag(c(W1, W2))            # dim = 2x2
+W <- diag(c(W1, W2), nrow=2, ncol=2)
 
 # Prior hyperparameters
 # theta_01 ~ N(mu_01, sigma2_01)
@@ -228,7 +246,7 @@ eta_01 <- 0.01
 nu_02  <- 0.01
 eta_02 <- 0.01
 
-N <- 1000
+N <- 1100
 burnin <- 100
 
 theta_samples   <- array(data=NA, dim=c(2,1,T,N))
@@ -237,7 +255,6 @@ tau_samples     <- vector("list", N)
 y_tilde_samples <- vector("list", N)
 S_samples       <- vector("list", N)
 
-#theta   <- array(data=NA, dim=c(2,1,T))
 tau     <- vector("list", T)      # tau = {tau_tj, j=1,...,y_t+1, t=1,...,T}
 S       <- vector("list", T)      # S =   {r_tj,   j=1,...,y_t+1, t=1,...,T}
 y_tilde <- vector("list", T)
@@ -247,7 +264,8 @@ update_y_tilde <- function(tau, S) {
     y_tilde <- vector("list", T)
 
     for (t in 1:T) {
-        m_t <- unname(mix_params[S[[t]], "m"])
+        #m_t <- mix_params[S[[t]], "m"]
+        m_t <- m_vec[S[[t]]]
         y_tilde_t <- -(log(tau[[t]]) + m_t)
         y_tilde[[t]] <- y_tilde_t
     }
@@ -263,7 +281,7 @@ for (t in 1:T) {
 
     # Initilize tau
     if (y_t > 0) {
-        u <- sort(runif(y_t))
+        u <- sort.int(runif(y_t), method="shell")
         tau_t <- c(u[1], u[-1]-u[-y_t], 1 - u[y_t] + rexp(1))
     } else {
         tau_t <- 1 + rexp(1)
@@ -272,11 +290,11 @@ for (t in 1:T) {
 
     # Initialize S
     # sample 1:10 randomly according to component weights probabilit
-    S_t <- sample(1:R_mix, size = n_t, replace = TRUE, prob = mix_params[, "w"])
+    S_t <- sample.int(R_mix, size = n_t, replace = TRUE, prob = w_vec)
     S[[t]] <- S_t
 
     #  Initialize y_tilde
-    m_t <- unname(mix_params[S[[t]], "m"])
+    m_t <- m_vec[S[[t]]]
     y_tilde_t <- -(log(tau[[t]]) + m_t)
     y_tilde[[t]] <- y_tilde_t
 }
@@ -291,6 +309,7 @@ for (n in 1:N) {
         elapsed_time <- (time - start_time)[[3]]
         printf("Iteration %d / %d | Elapsed time: %.0f s", n, N, elapsed_time)
     }
+
     # theta ~ p(theta | W, tau, S)
     theta <- sample_theta(mu_01, sigma2_01, mu_02, sigma2_02,
                           F, G, W, S, y_tilde)
@@ -315,23 +334,78 @@ for (n in 1:N) {
 }
 end_time <- proc.time()
 elapsed_time <- (end_time - start_time)[[3]]
+
+
+# Simulation Summary ####
 printf("Execution time: %.0f s", elapsed_time)
 
 theta1_hat <- apply(theta_samples[1,1,,-(1:burnin)], 1, mean)
 theta2_hat <- apply(theta_samples[2,1,,-(1:burnin)], 1, mean)
+W1_hat <- mean(W_samples[1,1,-(1:burnin)])
+W2_hat <- mean(W_samples[2,2,-(1:burnin)])
+printf("W1 mean: %.3f", W1_hat)
+printf("W2 mean: %.5f", W2_hat)
 
 lambda_true <- exp(theta1_true)
 lambda_hat <- exp(theta1_hat)
 
-#####
-# Plots
-# y, lambda_true, lambda_estimated
-x <- 1:T
 
-# theta1_true, theta2_mean
-par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
-plot(x, theta1_hat, type="l", ylab="")
-lines(x, theta1_true, col="blue")
+# Effective sample size ####
+printf("Effective Sample Size:")
+ess_w1 <- effectiveSize(mcmc(W_samples[1,1,-(1:burnin)]))
+ess_w2 <- effectiveSize(mcmc(W_samples[2,2,-(1:burnin)]))
+printf("\tW1: %.0f", ess_w1)
+printf("\tW2: %.0f", ess_w2)
+
+for (t in c(50, 100, 200, 250)) {
+    ess <- effectiveSize(mcmc(theta_samples[1,1,t,-(1:burnin)]))
+    printf("\ttheta %d,1: %0.f", t, ess)
+}
+
+for (t in c(50, 100, 200, 250)) {
+    ess <- effectiveSize(mcmc(theta_samples[2,1,t,-(1:burnin)]))
+    printf("\ttheta %d,2: %0.f", t, ess)
+}
+
+
+# Effective sample size / elapsed time ####
+printf("Effective Sample Size / seconds:")
+printf("\tW1: %.2f", ess_w1/elapsed_time)
+printf("\tW2: %.2f", ess_w2/elapsed_time)
+
+for (t in c(50, 100, 200, 250)) {
+    ess <- effectiveSize(mcmc(theta_samples[1,1,t,-(1:burnin)]))
+    printf("\ttheta %d,1: %.2f", t, ess/elapsed_time)
+}
+
+for (t in c(50, 100, 200, 250)) {
+    ess <- effectiveSize(mcmc(theta_samples[2,1,t,-(1:burnin)]))
+    printf("\ttheta %d,2: %.2f", t, ess/elapsed_time)
+}
+
+
+# Plots
+# y, lambda_true, lambda_estimated #####
+x <- 1:T
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
+plot(x, y, type="l", xlab="t", ylab="", col="gray",
+     main="Poisson 2nd Order Polynomial Model")
+points(x, y, pch = 20)
+lines(x, lambda_hat, col="red", lwd=1)
+lines(x, lambda_true, col="blue", lwd=1)
+legend("topright",
+       legend = expression(y[t], lambda[t], hat(lambda)[t]),
+       col = c("black", "blue", "red"),
+       lty = c(NA, 1, 1),
+       lwd = c(NA, 1, 1),
+       pch = c(20, NA, NA),
+       bty = "n")
+
+
+# theta1_true, theta2_mean ####
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
+plot(x, theta1_hat, type="l", ylab="", col="blue", lwd=2)
+lines(x, theta1_true)
 legend("topright",
        legend = expression(theta[t1], hat(theta)[t1]),
        col = c("black", "blue"),
@@ -339,10 +413,10 @@ legend("topright",
        lwd = c(1, 2),
        bty = "n")
 
-# theta2_true, theta2_mean
-#par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
-plot(x, theta2_hat, type="l", ylab="")
-lines(x, theta2_true, col="blue")
+
+# theta2_true, theta2_mean ####
+plot(x, theta2_hat, type="l", ylab="", col="blue", lwd=2)
+lines(x, theta2_true)
 legend("topright",
        legend = expression(theta[t2], hat(theta)[t2]),
        col = c("black", "blue"),
@@ -350,14 +424,62 @@ legend("topright",
        lwd = c(1, 2),
        bty = "n")
 
-# Traceplot theta_t2
-par(mfrow = c(2, 2), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
-for (t in c(50,100,200,250)) {
-    plot(theta_samples[1,1,50,], type="l", xlab="", ylab="")
+
+# Posterior distribution of theta_t1 ####
+par(mfrow = c(2, 2))
+for (t in c(50, 100, 200, 250)) {
+    hist(theta_samples[1, 1, t, -(1:burnin)], breaks = 50, freq = FALSE,
+         xlab = bquote(theta[.(t) * "," * 1]),
+         main = bquote("Posterior of " * theta[.(t) * "," * 1]))
+    lines(density(theta_samples[1, 1, t, -(1:burnin)]), col = "blue", lwd = 2)
 }
 
-# Traceplot theta_t1
+
+# Posterior distribution of theta_t2 ####
+par(mfrow = c(2, 2))
+for (t in c(50, 100, 200, 250)) {
+    hist(theta_samples[2, 1, t, -(1:burnin)], breaks = 50, freq = FALSE,
+         xlab = bquote(theta[.(t) * "," * 1]),
+         main = bquote("Posterior of " * theta[.(t) * "," * 2]))
+    lines(density(theta_samples[2, 1, t, -(1:burnin)]), col = "blue", lwd = 2)
+}
+
+
+
+# Posterior distribution of W1 ####
+
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
+hist(W_samples[1,1,-(1:burnin)], breaks = 50, freq = FALSE, xlab="",
+     main ="Posterior of W1")
+lines(density(W_samples[1,1,-(1:burnin)]), col = "blue", lwd = 2)
+
+
+# Posterior distribution of W2 ####
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
+hist(W_samples[2,2,-(1:burnin)], breaks = 50, freq = FALSE, xlab="",
+     main ="Posterior of W2")
+lines(density(W_samples[2,2,-(1:burnin)]), col = "blue", lwd = 2)
+
+
+# Traceplot for W1 and W2 ####
+par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex = 0.8)
+plot(W_samples[1,1,-(1:100)], type="l", xlab="n", ylab=expression(W[1]),
+     main=expression("Traceplot of " * W[1]))
+plot(W_samples[2,2,-(1:100)], type="l", xlab="n", ylab=expression(W[2]),
+     main=expression("Traceplot of " * W[2]))
+
+
+# Traceplot theta_t1 ####
 par(mfrow = c(2, 2), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
 for (t in c(50,100,200,250)) {
-    plot(theta_samples[2,1,50,], type="l", xlab="t", ylab="")
+    plot(theta_samples[1,1,50,], type="l", xlab="", ylab="",
+         main=bquote(theta[.(t)*","*1]))
+}
+
+
+# Traceplot theta_t2 ####
+par(mfrow = c(2, 2), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
+for (t in c(50,100,200,250)) {
+    plot(theta_samples[2,1,50,], type="l", xlab="t", ylab="",
+         main=bquote(theta[.(t)*","*2]))
 }
