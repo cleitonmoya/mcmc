@@ -5,25 +5,25 @@
 ## State Space Dynamic Models
 
 ### Poisson Local level model
-- [poisson_local_level/poisson_local_level_sim.R](poisson_local_level_sim.R): Data simulation.
-- [poisson_local_level/poisson_sin_level_sim.R](poisson_sin_level_sim.R): Data simulation with sin level.
-- [poisson_local_level/poisson_local_level_mh_gibbs.R](poisson_local_level_mh_gibbs.R): Metropolis within Gibbs (Geweke and Tanikazi, 2001). 
-- [poisson_local_level/poisson_local_level_cwmh.R](poisson_local_level_cwmh.R): Component Wise Metropolis Hastings (CWMH) (Montoril, Correia and Migon 2022).
-- [poisson_local_level/poisson_local_level_stan.R](poisson_local_level_cwmh.R): Simulation with [Stan](https://mc-stan.org/rstan/)
-- [poisson_local_level/poisson_pol2.stan](poisson_local_level.stan): Stan model
+- [poisson_local_level_sim.R](poisson_local_level/poisson_local_level_sim.R): Data simulation.
+- [poisson_sin_level_sim.R](poisson_local_level/poisson_sin_level_sim.R): Data simulation with sin level.
+- [poisson_local_level_mh_gibbs.R](poisson_local_level/poisson_local_level_mh_gibbs.R): Metropolis within Gibbs (Geweke and Tanikazi, 2001). 
+- [poisson_local_level_cwmh.R](poisson_local_level/poisson_local_level_cwmh.R): Component Wise Metropolis Hastings (CWMH) (Montoril, Correia and Migon 2022).
+- [poisson_local_level_stan.R](poisson_local_level/poisson_local_level_cwmh.R): Simulation with [Stan](https://mc-stan.org/rstan/)
+- [poisson_pol2.stan](poisson_local_level.stan): Stan model
 
 ### Poisson Second Order Polynomial Model
-- [poisson_pol2/poisson_pol2_sim.R](poisson_local_level_sim.R): Data simulation
-- [poisson_pol2/poisson_pol2_mh_gibbs.R](poisson_pol2_mh_gibbs.R): Metropolis within Gibbs (Geweke and Tanikazi, 2001).
-- [poisson_pol2/poisson_pol2_stan.R](poisson_local_level_cwmh.R): Simulation with [Stan](https://mc-stan.org/rstan/) (NUTS)
-- [poisson_pol2/poisson_pol2.stan](poisson_pol2.stan): Stan model
-- [poisson_pol2/poisson_schnatter.R](poisson_schnatter.R): Gibbs with data augmentation (Frühwirth-Schnatter and Wagner, 2006)
+- [poisson_pol2_sim.R](poisson_pol2/poisson_local_level_sim.R): Data simulation
+- [poisson_pol2_mh_gibbs.R](poisson_pol2/poisson_pol2_mh_gibbs.R): Metropolis within Gibbs (Geweke and Tanikazi, 2001).
+- [poisson_pol2_stan.R](poisson_pol2/poisson_local_level_cwmh.R): Simulation with [Stan](https://mc-stan.org/rstan/) (NUTS)
+- [poisson_pol2.stan](poisson_pol2/poisson_pol2.stan): Stan model
+- [poisson_schnatter.R](poisson_pol2/poisson_schnatter.R): Gibbs with data augmentation (Frühwirth-Schnatter and Wagner, 2006)
  
 ## Basic MCMC methods
-- [basic_methods/rejection_sampling.R](rejection_sampling.R): Simple rejection sampling. Samples from a target distribution (normalization is not required) using the uniform distribution as the envelope function.
-- [basic_methods/adaptive_rejection_sampling.R](adaptive_rejection_sampling.R): Adaptive rejection sampling (tangent method) of Gilks and Wild (1992). Requires log-concave target density.
-- [basic_methods/metropolis.R](metropolis.R): Random walking metropolis method.
-- [basic_methods/augmented_data.R](augmented_data.R): Implementation of the Linkage Model example using Data Augmentation / Substitution algorithm of Tanner and Wong (1987).
+- [rejection_sampling.R](basic_methods/rejection_sampling.R): Simple rejection sampling. Samples from a target distribution (normalization is not required) using the uniform distribution as the envelope function.
+- [adaptive_rejection_sampling.R](basic_methods/adaptive_rejection_sampling.R): Adaptive rejection sampling (tangent method) of Gilks and Wild (1992). Requires log-concave target density.
+- [metropolis.R](basic_methods/metropolis.R): Random walking metropolis method.
+- [augmented_data.R](basic_methods/augmented_data.R): Implementation of the Linkage Model example using Data Augmentation / Substitution algorithm of Tanner and Wong (1987).
 
 ## References
 - Frühwirth-Schnatter, S., & Wagner, H. (2006). Auxiliary Mixture Sampling for Parameter-Driven Models of Time Series of Counts with Applications to State Space Modelling. Biometrika, 93(4), 827–841.
