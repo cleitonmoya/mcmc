@@ -1,6 +1,6 @@
 # Bayesian Dynamic Models and MCMC Methods
 
-* In this repository, I implement some Markov Chain Monte Carlo (MCMC) algorithms and Bayesian dynamic models using R. The purpose is to study and better understand these methods. The implementations are not expected to be optimized, but may serve as a starting point.
+* In this repository, I implement some Markov Chain Monte Carlo (MCMC) algorithms and Bayesian dynamic models using R. The purpose is to study and better understand these methods. The implementations are not expected to be fully optimized, but may serve as a starting point.
 
 ## State Space Dynamic Models
 

@@ -52,18 +52,18 @@ sigma2_02 <- 10
 theta_02 <- y[2]-y[1] # initial value
 
 # V ~ Gamma(nu_V, eta_V)
-nu_V  <- 1
-eta_V <- 1
+nu_V  <- 0.01
+eta_V <- 0.01
 V <- 0.1 # initial value
 
 # phi1 = W1^(-1) ~ Gamma(nu_01, eta_01)
-nu_01  <- 1
-eta_01 <- 1
+nu_01  <- 0.01
+eta_01 <- 0.01
 W1 <- 1
 
 # phi2 = W2^(-1) ~ Gamma(nu_02, eta_02)
-nu_02  <- 1
-eta_02 <- 1
+nu_02  <- 0.01
+eta_02 <- 0.01
 W2 <- 1
 
 # initial values for theta_t1 and theta_t2

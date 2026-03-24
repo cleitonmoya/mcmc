@@ -1,7 +1,8 @@
 # 2nd Order Polynomial Dynamic Linear Model
-# MCMC: Gibbs with FFBS
+# MCMC: Gibbs with Chan Method
 # Author: Cleiton Moya de Almeida
 
+library(Matrix)
 library(coda)
 
 graphics.off()      # close the plots
@@ -18,12 +19,10 @@ setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 source <- "normal_pol2_sim1" # csv file with data
 df <- read.table(paste("../data/", source, ".csv", sep=""), header = TRUE)
 y <- df$y
-T <- length(y) # dimension T
 theta1_true <- df$theta1
 theta2_true <- df$theta2
-V_true      <- df$V[1]
-W1_true     <- df$W1[1]
-W2_true     <- df$W2[1]
+
+T <- length(y) # dimension T
 
 
 printf <- function(...) {
@@ -45,79 +44,50 @@ rmvn_chol <- function(mu, Sigma) {
     mu + drop(tp(L) %*% rnorm(length(mu)))
 }
 
-# Forward Filtering (Kalman Filter)
-forward_filter <- function(theta_01, theta_02, F, G, W, y, V) {
 
-    m_t <- as.matrix(c(theta_01, theta_02))
-    C_t <- matrix(0, nrow=2, ncol=2)
+# Montoril Method
+# Matriz H: T x T bidiagonal
+H   <- bandSparse(T, T,
+                  k         = c(0, -1),
+                  diagonals = list(rep(1, T), rep(-1, T - 1)))
+B   <- Diagonal(T) - H
 
-    a <- array(data=NA, dim=c(2,1,T))
-    R <- array(data=NA, dim=c(2,2,T))
-    m <- array(data=NA, dim=c(2,1,T))
-    C <- array(data=NA, dim=c(2,2,T))
+HtH <- tp(H) %*% H
+BtB <- tp(B) %*% B
+BtH <- tp(B) %*% H
+HtB <- tp(H) %*% B    # = t(BtH)
 
+e1 <- c(1, rep(0, T - 1))
 
-    for (t in 1:T) {
+sample_theta_montoril <- function(y, V, W1, W2, theta_01, theta_02,
+                                  vartheta1_prev) {
 
-        # Prior: (theta_t | D_{t-1}) ~ N[a_t, R_t]
-        a_t <- G %*% m_t
-        R_t <- G %*% C_t %*% tp(G) + W
+    # ---- Amostrar vartheta_2 ----
+    Phi2_bar <- (1/W1)*BtB + (1/W2)*HtH
+    rhs2     <- (1/W1)*(BtH %*% vartheta1_prev) + (theta_02/W2)*e1
 
-        a[,,t] <- a_t
-        R[,,t] <- R_t
+    ch2       <- Cholesky(Phi2_bar, LDL = FALSE, perm = FALSE)
+    mu2_bar   <- solve(ch2, rhs2)
+    u2        <- rnorm(T)
+    x2        <- as.vector(solve(ch2, u2, system = "Lt"))
+    vartheta2 <- as.vector(mu2_bar) + x2
 
-        # One-step-ahead forecast
-        f_t <- tp(F) %*% a_t
-        Q_t <- drop(tp(F) %*% R_t %*% F + V)
+    # ---- Amostrar vartheta_1 | vartheta_2 ----
+    Phi1_bar <- (1/V)*Diagonal(T) + (1/W1)*HtH
+    rhs1     <- (1/V)*y +
+        ((theta_01 + theta_02)/W1)*e1 +
+        (1/W1)*(HtB %*% vartheta2)
 
-        # Posterior: (theta_t | D_t) ~ N[m_t, C_t]
-        e_t <- drop(y[t] - f_t)
-        m_t <- a_t + (1/Q_t) * R_t %*% F * e_t
-        C_t <- R_t - (1/Q_t) * R_t %*% F %*% tp(F) %*% R_t
-        m[,,t] <- m_t
-        C[,,t] <- C_t
-    }
+    ch1       <- Cholesky(Phi1_bar, LDL = FALSE, perm = FALSE)
+    mu1_bar   <- solve(ch1, rhs1)
+    u1        <- rnorm(T)
+    x1        <- as.vector(solve(ch1, u1, system = "Lt"))
+    vartheta1 <- as.vector(mu1_bar) + x1
 
-    return(list("a"=a, "R"=R, "m"=m, "C"=C))
-
+    return(list(theta1 = vartheta1, theta2 = vartheta2))
 }
 
 
-# FFBS
-sample_theta <- function(theta_01, theta_02, F, G, W, y, V) {
-
-    # theta = {theta_1, ..., theta_T}
-    theta <- array(data=NA, dim=c(2,1,T))
-    res <- forward_filter(theta_01, theta_02, F, G, W, y, V)
-
-    a <- res$a
-    R <- res$R
-    m <- res$m
-    C <- res$C
-
-    # Compute B_t
-    B <- array(data=NA, dim=c(2,2,T))
-
-    for (t in 1:(T-1)) {
-        B[,,t] <- C[,,t] %*% tp(G) %*% inv2x2(R[,,t+1])
-    }
-
-    # Sample theta_T ~ N[m_T, C_T]
-    theta_t <- rmvn_chol(mu=m[,,T], Sigma=C[,,T])
-    theta[,,T] <- theta_t
-
-    # Backward: t = T-1, ..., 1
-    # theta_t | theta_{t+1} ~ N(h_t, H_t) [
-    # West and Harrison 1997, eq. 15.8, p. 570]
-    for (t in seq(T-1, 1)) {
-        h_t <- m[,,t] + B[,,t] %*% (theta_t - a[,,t+1])
-        H_t <- C[,,t] - B[,,t] %*% R[,,t+1] %*% tp(B[,,t])
-        theta_t <- rmvn_chol( mu=h_t, Sigma=H_t)
-        theta[,,t] <- theta_t
-    }
-
-    return(theta)
-}
 
 # SIMULATION MAIN PARAMETERS
 
@@ -135,7 +105,7 @@ theta_02 <- y[2]-y[1] # initial value
 # V ~ Gamma(nu_V, eta_V)
 nu_V  <- 0.01
 eta_V <- 0.01
-V <- 0.1 # initial value
+V <- 0.1
 
 # phi1 = W1^(-1) ~ Gamma(nu_01, eta_01)
 nu_01  <- 0.01
@@ -154,10 +124,10 @@ theta2 <- numeric(T)
 # DLM main parameters
 F <- matrix(c(1,0))             # dim = 2x1
 G <- rbind(c(1, 1), c(0, 1))    # dim = 2x2
-W <- diag(c(W1, W2), nrow=2, ncol=2)
+#W <- diag(c(W1, W2), nrow=2, ncol=2)
 
 N <- 5000           # Number of steps
-burnin <- 1000       # Number of burn-in steps
+burnin <- 1000      # Number of burn-in steps
 
 # Auxiliary vectors and matrix to store the results
 theta1_samples <- matrix(nrow=N, ncol=T)
@@ -167,6 +137,7 @@ W1_samples <- numeric(N)
 W2_samples <- numeric(N)
 theta_01_samples <-numeric(N)
 theta_02_samples <-numeric(N)
+
 
 start_time = proc.time() # execution time
 for (n in 1:N) {
@@ -185,12 +156,15 @@ for (n in 1:N) {
     # Sample theta_02
     sigma2_02_bar <- (1/sigma2_02 + 1/W1 + 1/W2)^(-1)
     mu_02_bar <- sigma2_02_bar*((theta1[1]-theta_01)/W1 +
-                                    theta2[1]/W2 + mu_02/sigma2_02)
+                                 theta2[1]/W2 + mu_02/sigma2_02)
     theta_02 <- rnorm(1, mean=mu_02_bar, sd=sqrt(sigma2_02_bar))
 
-    theta <- sample_theta(theta_01, theta_02, F, G, W, y, V)
-    theta1 <- theta[1,1,]
-    theta2 <- theta[2,1,]
+
+    # Sample theta - Montoril Method
+    res    <- sample_theta_montoril(y, V, W1, W2, theta_01, theta_02,
+                                    vartheta1_prev = theta1)
+    theta1 <- res$theta1
+    theta2 <- res$theta2
 
     # Sample phi_V
     nu_V_bar <- nu_V + T/2
@@ -214,10 +188,7 @@ for (n in 1:N) {
     phi2 <- rgamma(1, nu_02_bar, eta_02_bar)
     W2 <- 1/phi2
 
-    W <- diag(c(W1, W2), nrow=2, ncol=2)
-
-
-    # Armazenamento
+    # Store the sampled values
     theta_01_samples[n] <- theta_01
     theta_02_samples[n] <- theta_02
     V_samples[n] <- V
@@ -227,29 +198,24 @@ for (n in 1:N) {
     theta2_samples[n, ] <- theta2
 
 }
-
 end_time <- proc.time()
 elapsed_time <- (end_time - start_time)[[3]]
 
 # Simulation summary ####
 # Execution time
-sink("../summary/pol2_ffbs2.txt", split = TRUE)
+sink("../summary/pol2_montoril.txt", split = TRUE)
 printf("Execution time: %.0f s", elapsed_time)
 
 
 # Posterior mean
 theta1_mean <- colMeans(theta1_samples[-(1:burnin), ])
 theta2_mean <- colMeans(theta2_samples[-(1:burnin), ])
-
+lambda_mean <- exp(theta1_mean)
 printf("V mean: %.2f", mean(V_samples[-(1:burnin)]))
-printf("V median: %.2f", median(V_samples[-(1:burnin)]))
-printf("V true: %.2f", V_true)
 printf("W1 mean: %.3f", mean(W1_samples[-(1:burnin)]))
 printf("W1 median: %.5f", median(W1_samples[-(1:burnin)]))
-printf("W1 true: %.2f", W1_true)
 printf("W2 mean: %.5f", mean(W2_samples[-(1:burnin)]))
 printf("W2 median: %.5f", median(W2_samples[-(1:burnin)]))
-printf("W2 true: %.5f", W2_true)
 
 
 # Effective sample size
@@ -289,9 +255,11 @@ for (t in observed_times) {
 }
 sink()
 
+
 # Plots ####
+
 x <- 1:T
-# theta1_true, theta1_mean ####
+# theta1_true, theta1_mean
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
 plot(x, theta1_mean, type="l", ylab="", col="blue", lwd=2)
 lines(x, theta1_true)
@@ -303,7 +271,7 @@ legend("topright",
        bty = "n")
 
 
-# theta2_true, theta2_mean ####
+# theta2_true, theta2_mean
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
 plot(x, theta2_mean, type="l", ylab="", col="blue", lwd=2)
 lines(x, theta2_true)
@@ -315,7 +283,7 @@ legend("topright",
        bty = "n")
 
 
-# Posterior distribution of theta_t1 ####
+# Posterior distribution of theta_t1
 par(mfrow = c(2, 2))
 for (t in observed_times) {
     hist(theta1_samples[-(1:burnin), t], breaks = 50, freq = FALSE,
@@ -325,7 +293,7 @@ for (t in observed_times) {
 }
 
 
-# Posterior distribution of theta_t2 ####
+# Posterior distribution of theta_t2
 par(mfrow = c(2, 2))
 for (t in observed_times) {
     hist(theta2_samples[-(1:burnin), t], breaks = 50, freq = FALSE,
@@ -334,45 +302,39 @@ for (t in observed_times) {
     lines(density(theta2_samples[-(1:burnin), t]), col = "blue", lwd = 2)
 }
 
-
-# Posterior distribution of V ####
+# Posterior distribution of V
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
 hist(V_samples[-(1:burnin)], breaks = 50, freq = FALSE, main ="Posterior of V")
 lines(density(V_samples[-(1:burnin)]), col = "blue", lwd = 2)
 
-
-# Posterior distribution of W1 ####
+# Posterior distribution of W1
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
 hist(W1_samples[-(1:burnin)], breaks = 50, freq = FALSE, main ="Posterior of W1")
 lines(density(W1_samples[-(1:burnin)]), col = "blue", lwd = 2)
 
 
-# Posterior distribution of W2 ####
+# Posterior distribution of W2
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
 hist(W2_samples[-(1:burnin)], breaks = 50, freq = FALSE, main ="Posterior of W2")
 lines(density(W2_samples[-(1:burnin)]), col = "blue", lwd = 2)
 
 
-# Traceplot of V, W1 and W2 ####
+# Traceplot of V, W1 and W2
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
 plot(V_samples[-(1:100)], type="l", xlab="n", ylab="", main="Traceplot of V")
-abline(v = burnin, col = "red")
 plot(W1_samples[-(1:100)], type="l", xlab="n", ylab="", main="Traceplot of W1")
-abline(v = burnin, col = "red")
 plot(W2_samples[-(1:100)], type="l", xlab="n", ylab="", main="Traceplot of W2")
-abline(v = burnin, col = "red")
 
-# Traceplots for theta_t1 ####
+
+# Traceplots for theta_t1
 par(mfrow = c(2, 2))
 for (t in observed_times) {
     plot(theta1_samples[, t], type="l", main=bquote(theta[.(t)*","*1]), xlab="", ylab="")
-    abline(v = burnin, col = "red")
 }
 
 
-# Traceplots for theta_t2 ####
+# Traceplots for theta_t2
 par(mfrow = c(2, 2))
 for (t in observed_times) {
     plot(theta2_samples[, t], type="l", main=bquote(theta[.(t)*","*2]), xlab="", ylab="")
-    abline(v = burnin, col = "red")
 }
