@@ -20,8 +20,8 @@ options(error = function() traceback(2)) # more informative traceback
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source <- "pol2_sim1" # csv file with data
-df <- read.table(paste("data/", source, ".csv", sep=""), header = TRUE)
+source <- "poisson_pol2_sim1" # csv file with data
+df <- read.table(paste("../data/", source, ".csv", sep=""), header = TRUE)
 y <- df$y
 theta1_true <- df$theta1
 theta2_true <- df$theta2
@@ -265,12 +265,14 @@ ess_w2 <- effectiveSize(mcmc(W2_hist[-(1:burnin)]))
 printf("\tW1: %.0f", ess_w1)
 printf("\tW2: %.0f", ess_w2)
 
-for (t in c(50, 100, 200, 250)) {
+observed_times <- c(50, 100, 200, 250)
+
+for (t in observed_times) {
     ess <- effectiveSize(mcmc(vartheta1_hist[-(1:burnin),t]))
     printf("\ttheta %d,1: %0.f", t, ess)
 }
 
-for (t in c(50, 100, 200, 250)) {
+for (t in observed_times) {
     ess <- effectiveSize(mcmc(vartheta2_hist[-(1:burnin),t]))
     printf("\ttheta %d,2: %0.f", t, ess)
 }
@@ -280,12 +282,13 @@ printf("Effective Sample Size / second:")
 printf("\tW1: %.2f", ess_w1/elapsed_time)
 printf("\tW2: %.2f", ess_w2/elapsed_time)
 
-for (t in c(50, 100, 200, 250)) {
+
+for (t in observed_times) {
     ess <- effectiveSize(mcmc(vartheta1_hist[-(1:burnin),t]))
     printf("\ttheta %d,1: %.2f", t, ess/elapsed_time)
 }
 
-for (t in c(50, 100, 200, 250)) {
+for (t in observed_times) {
     ess <- effectiveSize(mcmc(vartheta2_hist[-(1:burnin),t]))
     printf("\ttheta %d,2: %.2f", t, ess/elapsed_time)
 }
@@ -337,7 +340,7 @@ legend("topright",
 
 # Posterior distribution of theta_t1 ####
 par(mfrow = c(2, 2))
-for (t in c(50, 100, 200, 250)) {
+for (t in observed_times) {
     hist(vartheta1_hist[-(1:burnin), t], breaks = 50, freq = FALSE,
          xlab = bquote(theta[.(t) * "," * 1]),
          main = bquote("Posterior of " * theta[.(t) * "," * 1]))
@@ -347,7 +350,7 @@ for (t in c(50, 100, 200, 250)) {
 
 # Posterior distribution of theta_t2 ####
 par(mfrow = c(2, 2))
-for (t in c(50, 100, 200, 250)) {
+for (t in observed_times) {
     hist(vartheta2_hist[-(1:burnin), t], breaks = 50, freq = FALSE,
          xlab = bquote(theta[.(t) * "," * 2]),
          main = bquote("Posterior of " * theta[.(t) * "," * 2]))
@@ -375,14 +378,14 @@ plot(W2_hist[-(1:100)], type="l", xlab="n", ylab="W", main="Traceplot of W2")
 
 # Traceplots for theta_t1 ####
 par(mfrow = c(2, 2))
-for (t in c(50, 100, 200, 250)) {
+for (t in observed_times) {
     plot(vartheta1_hist[, t], type="l", main=bquote(theta[.(t)*","*1]), xlab="", ylab="")
 }
 
 
 # Traceplots for theta_t2 ####
 par(mfrow = c(2, 2))
-for (t in c(50, 100, 200, 250)) {
+for (t in observed_times) {
     plot(vartheta2_hist[, t], type="l", main=bquote(theta[.(t)*","*2]), xlab="", ylab="")
 }
 

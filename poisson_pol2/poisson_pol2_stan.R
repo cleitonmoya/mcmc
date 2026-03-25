@@ -21,8 +21,8 @@ rstan_options(auto_write = TRUE)             # recompila só se o .stan mudar
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source <- "pol2_sim1" # csv file with data
-df <- read.table(paste("data/", source, ".csv", sep=""), header = TRUE)
+source <- "poisson_pol2_sim1" # csv file with data
+df <- read.table(paste("../data/", source, ".csv", sep=""), header = TRUE)
 y <- df$y
 Tt <- length(y)
 theta1_true <- df$theta1
@@ -56,7 +56,7 @@ fit <- sampling(
     object = model,
     data   = stan_data,
     chains = 1,
-    iter   = 11000,
+    iter   = 5000,
     warmup = burnin,
     thin   = 1,
     seed   = 42

@@ -21,11 +21,11 @@ options(error = function() traceback(2)) # more informative traceback
 
 # Change de directory to the same of the current file
 # setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
-setwd("C:/Users/cleit/OneDrive/Documentos/Projetos/R/mcmc")
+setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source <- "pol2_sim1" # csv file with data
-df <- read.table(paste("data/", source, ".csv", sep=""), header = TRUE)
+source <- "poisson_pol2_sim1" # csv file with data
+df <- read.table(paste("../data/", source, ".csv", sep=""), header = TRUE)
 y <- df$y
 theta1_true <- df$theta1
 theta2_true <- df$theta2
@@ -65,14 +65,16 @@ mix_params <- matrix(
 )
 R_mix <- nrow(mix_params)
 w_vec  <- mix_params[, "w"]
+w_vec <- w_vec/sum(w_vec)     # normalizing
 m_vec  <- mix_params[, "m"]
 s2_vec <- mix_params[, "s2"]
 inv_s2 <- 1 / s2_vec
 sqrt_s2 <- sqrt(s2_vec)
 
 # Forward Filtering (Kalman Filter)
+
 forward_filter <- function(mu_01, sigma2_01, mu_02, sigma2_02,
-                           F, G, W, S, y_tilde) {
+                           F, Ft, G, Gt, W, S, y_tilde) {
     m_t <- as.matrix(c(mu_01, mu_02))
     C_t <- diag(c(sigma2_01, sigma2_02), nrow=2, ncol=2)
 
@@ -90,18 +92,18 @@ forward_filter <- function(mu_01, sigma2_01, mu_02, sigma2_02,
 
         # Prior: (theta_t | D_{t-1}) ~ N[a_t, R_t]
         a_t <- G %*% m_t
-        R_t <- G %*% C_t %*% tp(G) + W
+        R_t <- G %*% C_t %*% Gt + W
         a[,,t] <- a_t
         R[,,t] <- R_t
 
         # One-step-ahead forecast
-        f_t <- tp(F) %*% a_t
+        f_t <- Ft %*% a_t
         Q_t <- drop(tp(F) %*% R_t %*% F + V_hat_t)
 
         # Posterior: (theta_t | D_t) ~ N[m_t, C_t]
         e_t <- drop(y_hat_t - f_t)
         m_t <- a_t + (1/Q_t) * R_t %*% F * e_t
-        C_t <- R_t - (1/Q_t) * R_t %*% F %*% tp(F) %*% R_t
+        C_t <- R_t - (1/Q_t) * R_t %*% F %*% Ft %*% R_t
         m[,,t] <- m_t
         C[,,t] <- C_t
 
@@ -111,13 +113,13 @@ forward_filter <- function(mu_01, sigma2_01, mu_02, sigma2_02,
 
 # FFBS
 sample_theta <- function(mu_01, sigma2_01, mu_02, sigma2_02,
-                         F, G, W, S, y_tilde) {
+                         F, Ft, G, Gt, W, S, y_tilde) {
 
     # theta = {theta_1, ..., theta_T}
     theta <- array(data=NA, dim=c(2,1,T))
 
     res <- forward_filter(mu_01, sigma2_01, mu_02, sigma2_02,
-                          F, G, W, S, y_tilde)
+                          F, Ft, G, Gt, W, S, y_tilde)
     a <- res$a
     R <- res$R
     m <- res$m
@@ -126,7 +128,7 @@ sample_theta <- function(mu_01, sigma2_01, mu_02, sigma2_02,
     # Compute B_t
     B <- array(data=NA, dim=c(2,2,T))
     for (t in 1:(T-1)) {
-        B[,,t] <- C[,,t] %*% tp(G) %*% inv2x2(R[,,t+1])
+        B[,,t] <- C[,,t] %*% Gt %*% inv2x2(R[,,t+1])
     }
 
     # Sample theta_T ~ N[m_T, C_T]
@@ -199,22 +201,42 @@ sample_tau <- function(theta, y) {
 
 
 sample_S <- function(y, tau, theta) {
-    S <- vector("list", T)
-    for (t in 1:T) {
-        n_t  <- y[t] + 1
-        log_lambda_t <- theta[1,,t]          # = theta_{t1}
-        S_t  <- integer(n_t)
 
-        z_tj <- -log(tau[[t]]) - log_lambda_t          # vector n_t
+    # Pré-computar constantes
+    log_w  <- log(mix_params[, "w"])
+    log_s  <- 0.5 * log(mix_params[, "s2"])
+    s2_inv <- 1 / mix_params[, "s2"]
+    m_vec  <- mix_params[, "m"]
 
-        # outer: shape (R_mix x n_t)
-        dz <- outer(m_vec, z_tj, "-")                  # m_k - z_tj
-        v_mat  <- (w_vec / sqrt_s2) * exp(-0.5 * dz^2 * inv_s2)
-        v_norm <- matrix(v_mat / rep(colSums(v_mat), each = R_mix), R_mix, n_t)
+    # Empilhar todos os z_{tj} de uma vez: vetor de comprimento sum(y+1)
+    n_t_vec <- y + 1L
+    z_all <- unlist(lapply(seq_len(T), function(t)
+        -log(tau[[t]]) - theta[1,,t]
+    ))  # comprimento total = sum(n_t_vec)
 
-        cdf <- apply(v_norm, 2, cumsum)                        # (R_mix x n_t)
-        u   <- runif(n_t)
-        S[[t]] <- pmin(colSums(cdf < matrix(u, R_mix, n_t, byrow = TRUE)) + 1L, R_mix)
+    total <- length(z_all)
+
+    # Log-pesos: total x R — uma única operação outer
+    dif2  <- outer(z_all, m_vec, function(a, b) (a - b)^2)  # total x R
+    log_v <- matrix(log_w - log_s, nrow=total, ncol=R_mix, byrow=TRUE) -
+        0.5 * dif2 * matrix(s2_inv, nrow=total, ncol=R_mix, byrow=TRUE)
+
+    # Estabilidade e normalização
+    log_v <- log_v - apply(log_v, 1, max)
+    v     <- exp(log_v)
+    prob  <- v / rowSums(v)
+
+    # Amostragem categórica: total draws, sem nenhum loop em R
+    cump <- tp(apply(prob, 1, cumsum))
+    u    <- runif(total)
+    r    <- rowSums(cump < u) + 1L
+
+    # Reempacotar em lista
+    S   <- vector("list", T)
+    idx <- 0L
+    for (t in seq_len(T)) {
+        S[[t]] <- r[idx + seq_len(n_t_vec[t])]
+        idx    <- idx + n_t_vec[t]
     }
     return(S)
 }
@@ -224,10 +246,14 @@ sample_S <- function(y, tau, theta) {
 
 # Model main parameters
 F <- matrix(c(1,0))             # dim = 2x1
+Ft <- tp(F)
 G <- rbind(c(1, 1), c(0, 1))    # dim = 2x2
+Gt <- tp(G)
 W1 <- 1                         # W_01
 W2 <- 0.1                       # W_02
 W <- diag(c(W1, W2), nrow=2, ncol=2)
+
+
 
 # Prior hyperparameters
 # theta_01 ~ N(mu_01, sigma2_01)
@@ -246,7 +272,7 @@ eta_01 <- 0.01
 nu_02  <- 0.01
 eta_02 <- 0.01
 
-N <- 1100
+N <- 1000
 burnin <- 100
 
 theta_samples   <- array(data=NA, dim=c(2,1,T,N))
@@ -264,7 +290,6 @@ update_y_tilde <- function(tau, S) {
     y_tilde <- vector("list", T)
 
     for (t in 1:T) {
-        #m_t <- mix_params[S[[t]], "m"]
         m_t <- m_vec[S[[t]]]
         y_tilde_t <- -(log(tau[[t]]) + m_t)
         y_tilde[[t]] <- y_tilde_t
@@ -312,7 +337,7 @@ for (n in 1:N) {
 
     # theta ~ p(theta | W, tau, S)
     theta <- sample_theta(mu_01, sigma2_01, mu_02, sigma2_02,
-                          F, G, W, S, y_tilde)
+                          F, Ft, G, Gt, W, S, y_tilde)
     theta_samples[,,,n] <- theta
 
     # W ~ p(W | theta, tau, S)
