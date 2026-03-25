@@ -186,46 +186,45 @@ for (n in 1:N) {
     phi2 <- rgamma(1, nu_02_bar, eta_02_bar)
     W2 <- 1/phi2
 
-    # Sample theta_t1 (random walking Metropolis) and
-    #        theta_t2 ~ N()
+
     n_ac <- 0 # number of accepted samples
+
+    # Sample vartheta2 | vartheta1
     for (t in 1:Tt) {
-
         if (t < Tt) {
-
-            sigma2_star <- (1/W1 + 2/W2)^(-1) # for theta_t2
-
-            if (t==1) {
-                # theta_t11
-                res <- sample_theta_t1(vartheta1[t], theta_01, vartheta1[t+1],
-                                       vartheta2[t], theta_02,
-                                       y[t], W1, varsigma2, final_t=FALSE)
-                vartheta1[t] <- res$theta_t1
-                # theta_t12
-                mu_star <- sigma2_star*((vartheta1[t+1] - vartheta1[t])/W1 +
-                                            (theta_02 + vartheta2[t+1])/W2)
+            sigma2_star <- (1/W1 + 2/W2)^(-1)
+            if (t == 1) {
+                mu_star <- sigma2_star * ((vartheta1[t+1] - vartheta1[t])/W1 +
+                                              (theta_02 + vartheta2[t+1])/W2)
             } else {
-
-                res <- sample_theta_t1(vartheta1[t], vartheta1[t-1], vartheta1[t+1],
-                                       vartheta2[t], vartheta2[t-1],
-                                       y[t], W1, varsigma2, final_t=FALSE)
-                vartheta1[t] <- res$theta_t1
-                mu_star <- sigma2_star*((vartheta1[t+1] - vartheta1[t])/W1 +
-                                            (vartheta2[t-1] + vartheta2[t+1])/W2)
+                mu_star <- sigma2_star * ((vartheta1[t+1] - vartheta1[t])/W1 +
+                                              (vartheta2[t-1] + vartheta2[t+1])/W2)
             }
+        } else {
+            mu_star    <- vartheta2[t-1]
+            sigma2_star <- W2
+        }
+        vartheta2[t] <- rnorm(1, mean=mu_star, sd=sqrt(sigma2_star))
+    }
 
+    # sample vartheta1 | vartheta2 (CWMH)
+    n_ac <- 0
+    for (t in 1:Tt) {
+        if (t == 1) {
+            res <- sample_theta_t1(vartheta1[t], theta_01, vartheta1[t+1],
+                                   vartheta2[t], theta_02,
+                                   y[t], W1, varsigma2, final_t=FALSE)
+        } else if (t < Tt) {
+            res <- sample_theta_t1(vartheta1[t], vartheta1[t-1], vartheta1[t+1],
+                                   vartheta2[t], vartheta2[t-1],
+                                   y[t], W1, varsigma2, final_t=FALSE)
         } else {
             res <- sample_theta_t1(vartheta1[t], vartheta1[t-1], NULL,
                                    vartheta2[t], vartheta2[t-1],
                                    y[t], W1, varsigma2, final_t=TRUE)
-            vartheta1[t] <- res$theta_t1
-            mu_star <- vartheta2[t-1]
-            sigma2_star <- W2
         }
-
-        vartheta2[t] <- rnorm(1, mean=mu_star, sd=sqrt(sigma2_star))
-        ac <- res$ac # flag: sample accpeted(1) or not (0)
-        n_ac <- n_ac + ac
+        vartheta1[t] <- res$theta_t1
+        n_ac <- n_ac + res$ac
     }
 
     # Mean acceptance ratio of theta_t1

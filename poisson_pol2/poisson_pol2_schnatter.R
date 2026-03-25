@@ -20,7 +20,6 @@ tp <- base::t       # alias to transpose function
 options(error = function() traceback(2)) # more informative traceback
 
 # Change de directory to the same of the current file
-# setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
@@ -208,7 +207,6 @@ sample_S <- function(y, tau, theta) {
     s2_inv <- 1 / mix_params[, "s2"]
     m_vec  <- mix_params[, "m"]
 
-    # Empilhar todos os z_{tj} de uma vez: vetor de comprimento sum(y+1)
     n_t_vec <- y + 1L
     z_all <- unlist(lapply(seq_len(T), function(t)
         -log(tau[[t]]) - theta[1,,t]
@@ -216,7 +214,7 @@ sample_S <- function(y, tau, theta) {
 
     total <- length(z_all)
 
-    # Log-pesos: total x R — uma única operação outer
+    # Log-pesos: total x R
     dif2  <- outer(z_all, m_vec, function(a, b) (a - b)^2)  # total x R
     log_v <- matrix(log_w - log_s, nrow=total, ncol=R_mix, byrow=TRUE) -
         0.5 * dif2 * matrix(s2_inv, nrow=total, ncol=R_mix, byrow=TRUE)
@@ -226,7 +224,7 @@ sample_S <- function(y, tau, theta) {
     v     <- exp(log_v)
     prob  <- v / rowSums(v)
 
-    # Amostragem categórica: total draws, sem nenhum loop em R
+    # Amostragem categórica
     cump <- tp(apply(prob, 1, cumsum))
     u    <- runif(total)
     r    <- rowSums(cump < u) + 1L

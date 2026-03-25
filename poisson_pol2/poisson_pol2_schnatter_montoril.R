@@ -74,62 +74,63 @@ inv_s2 <- 1 / s2_vec
 sqrt_s2 <- sqrt(s2_vec)
 
 
-# Sample theta - Chan Method
-sample_theta_chan <- function(y_hat, V_hat, G, W1, W2) {
+# Matrizes auxiliares pre-computadas fora do loop (T x T)
+# H : bidiagonal, 1 na diagonal principal, -1 na subdiagonal
+# B = I - H
+.H   <- bandSparse(T, T,
+                   k         = c(0, -1),
+                   diagonals = list(rep(1, T), rep(-1, T - 1)))
+.B   <- Diagonal(T) - .H
+.HtH <- Matrix::t(.H) %*% .H
+.BtB <- Matrix::t(.B) %*% .B
+.BtH <- Matrix::t(.B) %*% .H
+.HtB <- Matrix::t(.H) %*% .B
+.e1  <- c(1, rep(0, T - 1))
 
-    n    <- 2 * T
-    invW <- diag(c(1/W1, 1/W2), nrow=2, ncol=2)
+# Montoril et al. (2022) method
+#
+# Nota: V_hat e um vetor de comprimento T (heteroscedastico).
+# A posterior condicional de vartheta_1 usa Phi1_bar = diag(1/V_hat) + (1/W1)*H'H
+# A posterior condicional de vartheta_2 nao depende de V_hat (apenas de W1, W2).
+#
+# Posterioris condicionais completas (Proposicao 1, eq. (9) adaptada):
+#
+#   vartheta_2 | [...] ~ N(mu2_bar, Phi2_bar^{-1})
+#     Phi2_bar = (1/W1)*B'B + (1/W2)*H'H
+#     rhs2     = (1/W1)*B'H*vartheta1_prev + (theta_02/W2)*e1
+#
+#   vartheta_1 | vartheta_2, [...] ~ N(mu1_bar, Phi1_bar^{-1})
+#     Phi1_bar = diag(1/V_hat) + (1/W1)*H'H
+#     rhs1     = (1/V_hat)*y_hat + ((theta_01+theta_02)/W1)*e1 + (1/W1)*H'B*vartheta2
 
-    invD     <- invW
-    GtinvWG  <- tp(G) %*% invW %*% G
-    blk1     <- GtinvWG + invD
-    blk_mid  <- GtinvWG + invW
-    blkT     <- invW
-    blk_off  <- -invW %*% G
+sample_theta_montoril <- function(y_hat, V_hat, W1, W2, theta_01, theta_02,
+                                  vartheta1_prev) {
 
-    diag_vals <- c(blk1[1,1], blk1[2,2],
-                   rep(c(blk_mid[1,1], blk_mid[2,2]), T-2),
-                   blkT[1,1], blkT[2,2])
+    # ---- Amostrar vartheta_2 ----
+    Phi2_bar <- (1/W1)*.BtB + (1/W2)*.HtH
+    rhs2     <- (1/W1)*(.BtH %*% vartheta1_prev) + (theta_02/W2)*.e1
 
-    sub1_vals <- c(blk1[2,1], rep(blk_mid[2,1], T-2), blkT[2,1])
-    i_s1      <- seq(2, n, by=2)
+    ch2       <- Cholesky(Phi2_bar, LDL = FALSE, perm = FALSE)
+    mu2_bar   <- solve(ch2, rhs2)
+    x2        <- as.vector(solve(ch2, rnorm(T), system = "Lt"))
+    vartheta2 <- as.vector(mu2_bar) + x2
 
-    t_idx <- seq_len(T-1)
-    row_b <- c(2*t_idx+1, 2*t_idx+2, 2*t_idx+1, 2*t_idx+2)
-    col_b <- c(2*t_idx-1, 2*t_idx-1, 2*t_idx,   2*t_idx  )
-    val_b <- c(rep(blk_off[1,1], T-1), rep(blk_off[2,1], T-1),
-               rep(blk_off[1,2], T-1), rep(blk_off[2,2], T-1))
+    # ---- Amostrar vartheta_1 | vartheta_2 ----
+    # V_hat e vetor: diag(1/V_hat) entra como esparsa diagonal
+    Phi1_bar <- Diagonal(x = 1/V_hat) + (1/W1)*.HtH
+    rhs1     <- (y_hat / V_hat) +
+        ((theta_01 + theta_02)/W1)*.e1 +
+        (1/W1)*(.HtB %*% vartheta2)
 
-    K <- sparseMatrix(
-        i         = c(seq_len(n), i_s1,     row_b),
-        j         = c(seq_len(n), i_s1-1,   col_b),
-        x         = c(diag_vals,  sub1_vals, val_b),
-        dims      = c(n, n),
-        symmetric = TRUE
-    )
+    ch1       <- Cholesky(Phi1_bar, LDL = FALSE, perm = FALSE)
+    mu1_bar   <- solve(ch1, rhs1)
+    x1        <- as.vector(solve(ch1, rnorm(T), system = "Lt"))
+    vartheta1 <- as.vector(mu1_bar) + x1
 
-    # V_hat é vetor de comprimento T: 1/V_hat[t] na posição (2t-1, 2t-1)
-    obs_idx <- seq(1, n, by=2)
-    P <- K + sparseMatrix(i=obs_idx, j=obs_idx,
-                          x=1/V_hat, dims=c(n,n))   # <-- vetor, não escalar
-
-    ch      <- Cholesky(P, LDL=FALSE, perm=FALSE)
-
-    F_bar_b <- sparseMatrix(i=obs_idx, j=seq_len(T),
-                            x=1/V_hat, dims=c(n,T))  # <-- vetor, não escalar
-    b       <- as.vector(F_bar_b %*% y_hat)
-    eta_hat <- solve(ch, b)
-    u       <- rnorm(n)
-    x       <- as.vector(solve(ch, u, system="Lt"))
-
-    theta_vec <- as.vector(eta_hat + x)
-
-    # Reformatar: theta[i,t] -> array c(2,1,T)
-    theta <- array(NA, dim=c(2,1,T))
-    for (t in 1:T) {
-        theta[1,,t] <- theta_vec[2*t-1]
-        theta[2,,t] <- theta_vec[2*t]
-    }
+    # Retornar no mesmo formato array(2,1,T) do codigo original
+    theta <- array(NA, dim = c(2, 1, T))
+    theta[1,,] <- vartheta1
+    theta[2,,] <- vartheta2
     return(theta)
 }
 
@@ -322,6 +323,8 @@ for (t in 1:T) {
 
 
 # Main loop - Gibbs Sampling
+theta <- array(NA, dim = c(2, 1, T))
+theta[1,,] <- log(pmax(y, 0.5))
 start_time = proc.time() # execution time
 for (n in 1:N) {
 
@@ -333,7 +336,9 @@ for (n in 1:N) {
 
     # theta ~ p(theta | W, tau, S)
     suf   <- compute_sufficient(tau, S)
-    theta <- sample_theta_chan(suf$y_hat, suf$V_hat, G, W[1,1], W[2,2])
+    theta <- sample_theta_montoril(suf$y_hat, suf$V_hat, W[1,1], W[2,2],
+                                   theta_01 = mu_01, theta_02 = mu_02,
+                                   vartheta1_prev = theta[1,,])
     theta_samples[,,,n] <- theta
 
     # W ~ p(W | theta, tau, S)
