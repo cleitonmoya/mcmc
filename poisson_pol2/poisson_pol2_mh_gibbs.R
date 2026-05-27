@@ -6,27 +6,47 @@
 #    Computational statistics & data analysis, 37(2), 151-170
 # Author: Cleiton Moya de Almeida
 
-library(Rfast)      # provide colMedians()
-library(coda)
-
-graphics.off()      # close the plots
+#graphics.off()      # close the plots
 rm(list = ls())     # clear the environment
-cat("\014")         # clear the console
+#cat("\014")         # clear the console
 set.seed(42)
 tp <- Matrix::t     # matrix transpose alias
 options(error = function() traceback(2)) # more informative traceback
+
+library(Rfast)      # provide colMedians()
+library(coda)
+library(stats)
 
 # Change de directory to the same of the current file
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source <- "poisson_pol2_sim1" # csv file with data
-df <- read.table(paste("../data/", source, ".csv", sep=""), header = TRUE)
-y <- df$y
-theta1_true <- df$theta1
-theta2_true <- df$theta2
+
+source <- "poisson_sin_200"
+t_obs <- c(50, 100, 150, 200)
+#t_obs <- c(250, 500, 750, 1000)
+#t_obs <- c(25, 50, 75, 100)
+theta2_present <- FALSE
+burnin <- 1000       # Number of burn-in steps
+
+#source <- "poisson_sin_2000" # rds file with data
+#t_obs <- c(500, 1000, 1500, 2000)
+
+data <- readRDS(paste("../data/", source, ".rds", sep=""))
+y <- data$y
+
+if (theta2_present) {
+    theta1_true <- data$theta1
+    theta2_true <- data$theta2
+} else {
+    theta1_true <- data$theta
+}
+lambda_true <- exp(theta1_true)
+#lambda_true <- theta1_true
 
 Tt <- length(y) # dimension T
+
+#source <- "poisson_sin_2000"
 
 # Print auxiliary function
 printf <- function(...) {
@@ -116,9 +136,9 @@ eta_01 <- 0.01
 nu_02  <- 0.01
 eta_02 <- 0.01
 
-N <- 11000           # Number of steps
-varsigma2 <- 0.07    # Random walkikng variance hyperparameter
-burnin <- 1000       # Number of burn-in steps
+N <- 10000           # Number of steps
+varsigma2 <- 0.5     # Random walkikng variance hyperparameter
+
 
 # Auxiliary vectors and matrix to store the results
 vartheta1_hist <- matrix(nrow=N, ncol=Tt)
@@ -135,14 +155,13 @@ ac_hist <- numeric(N)
 # Initialization
 vartheta1_init <- log(y + 0.5)
 
-library(stats)
 vartheta1_smooth <- filter(vartheta1_init, rep(1/5, 5), sides=2)
 vartheta1_smooth[is.na(vartheta1_smooth)] <- vartheta1_init[is.na(vartheta1_smooth)]
 vartheta2_init <- c(diff(vartheta1_smooth), 0)
 
 #vartheta2_init <- c(diff(vartheta1_init), 0)  # diferenças de theta1
-W2 <- var(diff(vartheta2_init)) + 1e-6        # escala compatível
-W1 <- var(diff(vartheta1_init))
+W2 <- 0.01
+W1 <- 0.01
 phi1 <- 1/W1
 phi2 <- 1/W2
 vartheta1 <- as.matrix(vartheta1_init)
@@ -265,14 +284,12 @@ ess_w2 <- effectiveSize(mcmc(W2_hist[-(1:burnin)]))
 printf("\tW1: %.0f", ess_w1)
 printf("\tW2: %.0f", ess_w2)
 
-observed_times <- c(50, 100, 200, 250)
-
-for (t in observed_times) {
+for (t in t_obs) {
     ess <- effectiveSize(mcmc(vartheta1_hist[-(1:burnin),t]))
     printf("\ttheta %d,1: %0.f", t, ess)
 }
 
-for (t in observed_times) {
+for (t in t_obs) {
     ess <- effectiveSize(mcmc(vartheta2_hist[-(1:burnin),t]))
     printf("\ttheta %d,2: %0.f", t, ess)
 }
@@ -283,12 +300,12 @@ printf("\tW1: %.2f", ess_w1/elapsed_time)
 printf("\tW2: %.2f", ess_w2/elapsed_time)
 
 
-for (t in observed_times) {
+for (t in t_obs) {
     ess <- effectiveSize(mcmc(vartheta1_hist[-(1:burnin),t]))
     printf("\ttheta %d,1: %.2f", t, ess/elapsed_time)
 }
 
-for (t in observed_times) {
+for (t in t_obs) {
     ess <- effectiveSize(mcmc(vartheta2_hist[-(1:burnin),t]))
     printf("\ttheta %d,2: %.2f", t, ess/elapsed_time)
 }
@@ -297,7 +314,6 @@ for (t in observed_times) {
 #####
 # Plots
 # y, lambda_true, lambda_estimated
-lambda_true <- exp(theta1_true)
 x <- 1:Tt
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
 plot(x, y, type="l", xlab="t", ylab="", col="gray",
@@ -315,32 +331,32 @@ legend("topright",
 
 
 # y, theta1_true, theta1_mean ####
-par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
-plot(x, theta1_mean, type="l", ylab="", col="blue", lwd=2)
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8)
+ylim_range <- range(theta1_mean, theta1_true)
+plot(x, theta1_mean, type="l", ylab="", col="blue", lwd=2, ylim=ylim_range,
+     main="Poisson local trend model")
 lines(x, theta1_true)
-legend("topright",
-       legend = expression(theta[t2], hat(theta)[t2]),
-       col = c("black", "blue"),
-       lty = c(1, 1),
-       lwd = c(1, 2),
-       bty = "n")
+
 
 
 # y, theta2_true, theta2_mean ####
+#y_range <- range(theta2_true, theta2_mean)
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
 plot(x, theta2_mean, type="l", ylab="", col="blue", lwd=2)
-lines(x, theta2_true)
-legend("topright",
-       legend = expression(theta[t2], hat(theta)[t2]),
-       col = c("black", "blue"),
-       lty = c(1, 1),
-       lwd = c(1, 2),
-       bty = "n")
+if (theta2_present) {
+    lines(x, theta2_true)
+    legend("topright",
+           legend = expression(theta[t2], hat(theta)[t2]),
+           col = c("black", "blue"),
+           lty = c(1, 1),
+           lwd = c(1, 2),
+           bty = "n")
+}
 
 
 # Posterior distribution of theta_t1 ####
 par(mfrow = c(2, 2))
-for (t in observed_times) {
+for (t in t_obs) {
     hist(vartheta1_hist[-(1:burnin), t], breaks = 50, freq = FALSE,
          xlab = bquote(theta[.(t) * "," * 1]),
          main = bquote("Posterior of " * theta[.(t) * "," * 1]))
@@ -350,7 +366,7 @@ for (t in observed_times) {
 
 # Posterior distribution of theta_t2 ####
 par(mfrow = c(2, 2))
-for (t in observed_times) {
+for (t in t_obs) {
     hist(vartheta2_hist[-(1:burnin), t], breaks = 50, freq = FALSE,
          xlab = bquote(theta[.(t) * "," * 2]),
          main = bquote("Posterior of " * theta[.(t) * "," * 2]))
@@ -372,20 +388,20 @@ lines(density(W2_hist[-(1:burnin)]), col = "blue", lwd = 2)
 
 # Traceplot for W1 and W2 ####
 par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex = 0.8)
-plot(W1_hist[-(1:100)], type="l", xlab="n", ylab="W", main="Traceplot of W1")
-plot(W2_hist[-(1:100)], type="l", xlab="n", ylab="W", main="Traceplot of W2")
+plot(W1_hist[-(1:burnin)], type="l", xlab="n", ylab="W", main="Traceplot of W1")
+plot(W2_hist[-(1:burnin)], type="l", xlab="n", ylab="W", main="Traceplot of W2")
 
 
 # Traceplots for theta_t1 ####
 par(mfrow = c(2, 2))
-for (t in observed_times) {
+for (t in t_obs) {
     plot(vartheta1_hist[, t], type="l", main=bquote(theta[.(t)*","*1]), xlab="", ylab="")
 }
 
 
 # Traceplots for theta_t2 ####
 par(mfrow = c(2, 2))
-for (t in observed_times) {
+for (t in t_obs) {
     plot(vartheta2_hist[, t], type="l", main=bquote(theta[.(t)*","*2]), xlab="", ylab="")
 }
 

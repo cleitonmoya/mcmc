@@ -5,26 +5,30 @@
 graphics.off()      # close the plots
 rm(list = ls())     # clear the environment
 cat("\014")         # clear the console
+set.seed(42)
+
 
 # change de directory to the same of the current file
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
-filename <- "sin_level" # csv file to save the data
+filename1 <- "poisson_sin_200" # csv file to save the data
+filename2 <- "poisson_sin_2000" # csv file to save the data
 
-set.seed(42)
+T1 <- 200       # number of observations
+T2 <- 2000
+theta1 <- sin(2*pi*seq_len(T1)/T1)
+theta2 <- sin(2*pi*seq_len(T2)/T2)
 
-Tt <- 200       # number of observations
-theta_sim <- sin(2*pi*seq_len(Tt)/(Tt))
-y_sim <- rpois(Tt, exp(theta_sim))
+y1 <- rpois(T1, exp(theta1))
+y2 <- rpois(T2, exp(theta2))
 
-#####
+plot(theta1, type="l")
+plot(theta2, type="l")
+plot(y1)
+plot(y2)
+
 # Save the data
-df <- data.frame(y_sim, theta_sim)
-write.table(df, file = paste("data/", filename, ".csv", sep=""),
-            row.names=FALSE, col.names=c("y", "theta1"))
+saveRDS(list(y = y1, theta=theta1),
+        paste("../data/", filename1, ".rds", sep=""))
 
-#####
-x <- 1:Tt
-par(mar = c(4, 4, 2, 4)) # bottom left, top, right
-plot(x, y_sim, type="l", col="gray", xlab="t", ylab=expression(y[t]))
-points(x, y_sim, pch = 20)
-lines(x, exp(theta_sim), col="red")
+saveRDS(list(y = y2, theta=theta2),
+        paste("../data/", filename2, ".rds", sep=""))

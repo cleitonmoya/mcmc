@@ -6,8 +6,8 @@ library(Matrix)
 library(coda)
 
 graphics.off()      # close the plots
-rm(list = ls())     # clear the environment
-cat("\014")         # clear the console
+#rm(list = ls())     # clear the environment
+#cat("\014")         # clear the console
 set.seed(42)
 tp <- Matrix::t     # matrix transpose alias
 options(error = function() traceback(2)) # more informative traceback

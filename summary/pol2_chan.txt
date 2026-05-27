@@ -1,4 +1,4 @@
-Execution time: 29 s 
+Execution time: 54 s 
 V mean: 0.40 
 W1 mean: 0.160 
 W1 median: 0.15389 
@@ -8,23 +8,23 @@ Effective Sample Size:
 	V:  633 
 	W1: 200 
 	W2: 147 
-	theta 25,1: 4000 
 	theta 50,1: 4000 
 	theta 100,1: 4000 
 	theta 150,1: 4000 
-	theta 25,2: 4000 
+	theta 250,1: 4000 
 	theta 50,2: 4260 
 	theta 100,2: 3786 
 	theta 150,2: 4426 
+	theta 250,2: 4000 
 Effective Sample Size / second: 
-	V1: 22.14 
-	W1: 6.98 
-	W2: 5.15 
-	theta 25,1: 139.91 
-	theta 50,1: 139.91 
-	theta 100,1: 139.91 
-	theta 150,1: 139.91 
-	theta 25,2: 139.91 
-	theta 50,2: 149.00 
-	theta 100,2: 132.43 
-	theta 150,2: 154.82 
+	V1: 11.66 
+	W1: 3.68 
+	W2: 2.71 
+	theta 50,1: 73.71 
+	theta 100,1: 73.71 
+	theta 150,1: 73.71 
+	theta 250,1: 73.71 
+	theta 50,2: 78.50 
+	theta 100,2: 69.77 
+	theta 150,2: 81.56 
+	theta 250,2: 73.71 

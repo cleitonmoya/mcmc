@@ -8,23 +8,25 @@ cat("\014")         # clear the console
 
 # change de directory to the same of the current file
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
-filename <- "teste" # csv file to save the data
+filename <- "poisson_ar_trend" # .rds file to save data
 
 set.seed(42)
 
-theta1 <- 2.5  # theta_01
-theta2 <- 0.05 # theta_02
-W1 <- 0.03     # state variance W1
-W2 <- 0.00003  # state variance W2
-Tt <- 300      # number of observations
+theta1 <- 0.01 # theta_01
+theta2 <- 0.01 # theta_02
+W1 <- 0.1      # state variance W1
+W2 <- 0.02     # state variance W2
+Tt <- 200      # number of observations
+rho1 <- 1
+rho2 <- 0.7
 
 y_sim <- numeric(Tt)
 theta1_sim <- numeric(Tt)
 theta2_sim <- numeric(Tt)
 
 for (t in 1:Tt) {
-    theta1 <- theta1 + theta2 + rnorm(1, mean=0, sd=sqrt(W1))
-    theta2 <- theta2 + rnorm(1, mean=0, sd=sqrt(W2))
+    theta1 <- rho1*theta1 + theta2 + rnorm(1, mean=0, sd=sqrt(W1))
+    theta2 <- rho2*theta2 + rnorm(1, mean=0, sd=sqrt(W2))
 
     y <- rpois(1, exp(theta1))
 
@@ -33,12 +35,7 @@ for (t in 1:Tt) {
     y_sim[t] <- y
 }
 
-#####
-# Save the data
-df <- data.frame(y_sim, theta1_sim, theta2_sim)
-write.table(df, file = paste("data/", filename, ".csv", sep=""),
-            row.names=FALSE, col.names=c("y", "theta1", "theta2"))
-
+# Plot #####
 x <- 1:Tt
 par(mar = c(4, 4, 2, 4)) # bottom left, top, right
 plot(x, y_sim, type="l", col="gray", xlab="t", ylab=expression(y[t]))
@@ -47,3 +44,7 @@ lines(x, exp(theta1_sim), col="red")
 
 plot(x, theta1_sim, type="l")
 plot(x, theta2_sim, type="l")
+
+# Save the data #####
+saveRDS(list(y = y_sim, theta1=theta1_sim, theta2=theta2_sim),
+        paste("../data/", filename, ".rds", sep=""))

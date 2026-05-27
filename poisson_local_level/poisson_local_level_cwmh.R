@@ -19,10 +19,10 @@ tp <- Matrix::t     # matrix transpose alias
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source <- "sim1" # csv file with data
-df <- read.table(paste("data/", source, ".csv", sep=""), header = TRUE)
+source <- "poisson_local_level_sim1" # csv file with data
+df <- read.table(paste("../data/", source, ".csv", sep=""), header = TRUE)
 y <- df$y
-theta_true <- df$mu
+theta_true <- df$theta
 
 Tt <- length(y) # dimension T
 
@@ -106,6 +106,13 @@ ac_vartheta_hist <- numeric(N)
 # Main loop
 start_time = proc.time() # execution time
 for (n in 1:N) {
+
+
+    if (n %% 1000 == 0) {
+        time <- proc.time()
+        elapsed_time <- (time - start_time)[[3]]
+        printf("Iteration %d / %d | Elapsed time: %.0f s", n, N, elapsed_time)
+    }
 
     # 1. Sample theta_0
     sigma2_0_bar <- (1/sigma2_0 +1/W)^(-1)

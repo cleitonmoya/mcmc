@@ -9,7 +9,7 @@ set.seed(42)
 
 # change de directory to the same of the current file
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
-filename <- "normal_pol2_sim1" # csv file to save the data
+filename <- "normal_pol2_sim2" # csv file to save the data
 
 T <- 300
 V <- 0.5       # tau_v = 2
