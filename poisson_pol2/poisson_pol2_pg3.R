@@ -240,9 +240,7 @@ for (n in 1:N) {
   # t = T: só evolução própria, sem termos futuros
   theta2_star[Tt] <- rnorm(1, mean=theta2_star[Tt-1], sd=sd_W2)
 
-  # ------------------------------------------------------------------
-  # Armazenar
-  # ------------------------------------------------------------------
+  # Store the results
   theta_01_hist[n]      <- theta_01
   theta_02_hist[n]      <- theta_02
   W1_hist[n]            <- W1
