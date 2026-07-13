@@ -19,7 +19,7 @@ options(error = function() traceback(2)) # more informative traceback
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source <- "poisson_sin_2000" # rds file with data
+source <- "poisson_pol2_200" # rds file with data
 data <- readRDS(paste("../data/", source, ".rds", sep=""))
 y <- data$y
 theta_true <- data$theta
@@ -56,14 +56,14 @@ sigma2_0 <- 10
 
 # W ~ InvGamma(alpha_W, beta_W)
 alpha_W  <- 2
-beta_W <- 0.01
+beta_W <- 0.1
 x_ <- seq(1, 10, 0.1)
 y_ <- dinvgamma(x_, alpha_W, beta_W)
 plot(x_, y_, type="l")
 
-N <- 1000      # Number of steps
-K <- 200       # number of particles
-burnin <- 200  # Number of burn-in steps
+N <- 10000      # Number of steps
+K <- 200        # number of particles
+burnin <- 1000  # Number of burn-in steps
 
 # Auxiliary vectors and matrix to store the results
 W_hist <- numeric(N)

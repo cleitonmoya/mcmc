@@ -1,24 +1,26 @@
-# Poisson Local Level Model
+# Local Level Dynamic Linear Model
 #
 # Model:
-#  y_t ~ Poisson(exp{theta_t})
+#  y_t ~ theta_t + nu_t,               nu_t ~ N(0, V)
 #  theta_t = theta_{t-1} + omega_t, omega_t ~ N(0, W)
 #
 # Priors:
 #  theta_0 | D_0 ~ N(mu_0, sigma2_0)
-#  1/W ~ gamma(shape=nu_0, rate=eta_0)
+#  1/V | D_0 ~ gamma(shape=nu_V, rate=eta_V)
+#  1/W | D_0 ~ gamma(shape=nu_W, rate=eta_W)
 #
 # MCMC:
-#  Component-Wise Metropolis within Gibbs for theta_t
-#  Metropolis proposal: Random Walking
+#  Gibbs with Chan Method
 #
-# Reference: Geweke, J., & Tanizaki, H. (2001).
-#    Bayesian estimation of state-space models using the
-#    Metropolis–Hastings algorithm within Gibbs sampling.
-#    Computational statistics & data analysis, 37(2), 151-170
+# Reference: Chan, J. C. C., & Jeliazkov, I. (2009). Efficient simulation
+# and integrated likelihood estimation in state space models.
+# International Journal of Mathematical Modelling and Numerical Optimisation,
+# 1(1/2), 101. https://doi.org/10.1504/IJMMNO.2009.030090
 #
 # Author: Cleiton Moya de Almeida
 
+library(Matrix)    # sparse matrix manipulation
+library(coda)      # diagnostics for mcmc
 
 #graphics.off()    # close the plots
 rm(list = ls())    # clear the environment
@@ -26,84 +28,30 @@ rm(list = ls())    # clear the environment
 tp <- Matrix::t    # matrix transpose alias
 options(error = function() traceback(2)) # more informative traceback
 set.seed(42)
-library(coda)      # diagnostics for mcmc
+
 
 # Change de directory to the same of the current file
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source <- "doppler" # rds file with data
-#t_obs <- c(50, 75, 100, 192)
-t_obs <- c(250, 500, 750, 1000)
+source <- "normal_local_level_sim_2000" # rds file with data
+t_obs <- c(50, 100, 150, 175)
 data <- readRDS(paste("../data/", source, ".rds", sep=""))
 y <- data$y
+y_matr <- Matrix(y, ncol=1)
 Tt <- length(y) # dimension T
 
 theta_sim_available <- TRUE    # simulated theta is available
 if (theta_sim_available) {
     theta_true <- data$theta
-    lambda_true <- exp(theta_true)
+    W_true <- data$W
+    V_true <- data$V
 }
 
 # AUXILIARY FUNCTIONS ####
 
 # Print auxiliary function
 printf <- function(...) cat(paste(sprintf(...), "\n"))
-
-
-# Full conditional log-posterior for theta_t, t=1, ..., T-1
-# theta_tm1: theta_{t-1}
-# theta_tp1: theta_{t+1}
-logpost_theta_t <- function(theta_t, theta_tm1, theta_tp1, yt, W) {
-    p1 <- yt*theta_t - exp(theta_t) # log-likelihood
-    p2 <- -(theta_t - theta_tm1)^2/(2*W)
-    p3 <- -(theta_tp1 - theta_t)^2/(2*W)
-    logp <- p1+p2+p3
-    return(logp)
-}
-
-
-# Full conditional log-posterior for theta_T (t=T)
-logpost_theta_T <- function(theta_t, theta_tm1, yt, W) {
-    p1 <- yt*theta_t - exp(theta_t) # log-likelihood
-    p2 <- -(theta_t - theta_tm1)^2/(2*W)
-    logp <- p1+p2
-    return(logp)
-}
-
-
-# Sample theta_t ~ logpost_theta_t (Metropolis step)
-# final_t: boolean (0: t<T; 1: t=T)
-sample_theta_t <- function(theta_t_current, theta_tm1, theta_tp1,
-                           yt, W, varsigma2, final_t) {
-
-    # proposed theta
-    theta_t_prop <- rnorm(1, mean=theta_t_current, sd=sqrt(varsigma2))
-
-    # acceptance/rejection step
-    ac <- 0 # accepted flag
-    logu <- log(runif(1))
-
-    if (final_t) {
-        logp1 <- logpost_theta_T(theta_t_prop, theta_tm1, yt, W)
-        logp2 <- logpost_theta_T(theta_t_current, theta_tm1, yt, W)
-    } else {
-        logp1 <- logpost_theta_t(theta_t_prop, theta_tm1, theta_tp1, yt, W)
-        logp2 <- logpost_theta_t(theta_t_current, theta_tm1, theta_tp1, yt, W)
-    }
-
-    logr <- logp1 - logp2
-
-    # acceptance criteria
-    if (logu < logr){
-        theta_t <- theta_t_prop
-        ac <- 1
-    } else {
-        theta_t <- theta_t_current
-    }
-
-    return(list(theta_t=theta_t, ac=ac))
-}
 
 
 # SIMULATION MAIN PARAMETERS ####
@@ -113,24 +61,62 @@ sample_theta_t <- function(theta_t_current, theta_tm1, theta_tp1,
 mu_0 <- 0
 sigma2_0 <- 10
 
-# phi = 1/W ~ Gamma(shape=nu_0, rate=eta_0)
-nu_0 <- 2
-eta_0 <- 0.01
+# phi_V = 1/V ~ Gamma(shape=nu_V, rate=eta_V)
+nu_V <- 2
+eta_V <- 0.01
+
+# phi_W = 1/W ~ Gamma(shape=nu_W, rate=eta_W)
+nu_W <- 2
+eta_W <- 0.01
 
 N <- 10000         # number of simulation steps
-varsigma2 <- 0.01  # random walkikng variance hyperparameter
 burnin <- 1000     # number of burn-in steps
+
+# Initialization
+V <- 0.001
+W <- 0.001
+theta <- y
+
+# Chan prior precision matrix base form (without V and W)
+sub_diag_base <- rep(-1, Tt-1)
+main_diag_base <- c(rep(2, Tt-1), 1)
+K0 <- bandSparse(n=Tt, k=c(0, -1), diagonals=list(main_diag_base, sub_diag_base), symmetric = TRUE)
+Ch_factor0 <- Cholesky(K0, perm = FALSE)
+
+# Use the basic form K0
+chan_sample <- function(y, V, W, theta_0) {
+
+    # Posterior precision matrix (built uppon K0)
+    invVcal <- .sparseDiagonal(n=Tt, x=1/V)
+
+    #sub_diag <- rep(-1/W, Tt-1)
+    #main_diag <- c(rep(2/W, Tt-1), 1/W)
+    #K <- bandSparse(n=Tt, k=c(0, -1), diagonals=list(main_diag, sub_diag), symmetric = TRUE)
+    #P <- forceSymmetric(K + invVcal)
+    P <- forceSymmetric(K0/W + invVcal)
+
+    # Cholesky decomposition
+    Ch_factor <- update(Ch_factor0, P)
+
+    # Smooothing
+    b <- invVcal %*% y_matr + Matrix(data=c(theta_0/W, rep(0, Tt-1)), ncol=1, sparse=TRUE)
+    theta_hat <- as.numeric(Matrix::solve(Ch_factor, b, system="A"))
+
+    # Sampling
+    d <- Matrix::diag(Ch_factor)
+    u <- rnorm(Tt)
+    w <- u / sqrt(d)
+    x <- as.vector(Matrix::solve(Ch_factor, w, system="Lt"))
+    theta <- theta_hat + x
+    return(theta)
+}
+
 
 # Auxiliary vectors and matrix to store the results
 theta_hist <- matrix(nrow=N, ncol=Tt)
+V_hist <- numeric(N)
 W_hist <- numeric(N)
 theta_0_hist <-numeric(N)
-ac_theta_hist <- numeric(N)
-
-# Initialization
-W <- 0.001
-theta <- y
-phi <- 1/W
 
 
 # MAIN LOOP ####
@@ -144,47 +130,31 @@ for (n in 1:N) {
         printf("Iteration %d / %d | Elapsed time: %.0f s", n, N, elapsed_time)
     }
 
-    # 1. Sample theta_0
+    # Sample theta_0
     sigma2_0_bar <- (1/sigma2_0 +1/W)^(-1)
     mu_0_bar <- sigma2_0_bar*(mu_0/sigma2_0 + theta[1]/W)
     theta_0 <- rnorm(1, mean=mu_0_bar, sd=sqrt(sigma2_0_bar))
 
-    # 2. Sample phi (W^(-1))
-    nu_0_bar <- nu_0 + Tt/2
+    # Sample phi_V
+    nu_V_bar <- nu_V + Tt/2
+    diffs <- y-theta
+    eta_V_bar <- eta_V + 0.5 * sum(diffs^2)
+    phi_V <- rgamma(1, shape=nu_V_bar, rate=eta_V_bar)
+    V <- 1/phi_V
+
+    # Sample phi_W
+    nu_W_bar <- nu_W + Tt/2
     diffs <- theta - c(theta_0, theta[-Tt])
-    eta_0_bar <- eta_0 + 0.5 * sum(diffs^2)
-    phi <- rgamma(1, shape=nu_0_bar, rate=eta_0_bar)
-    W <- 1/phi
+    eta_W_bar <- eta_W + 0.5 * sum(diffs^2)
+    phi_W <- rgamma(1, shape=nu_W_bar, rate=eta_W_bar)
+    W <- 1/phi_W
 
-    # 3. Sample \theta (sample \theta_t, t=1,...,T)
-    n_ac <- 0 # number of accepçted samples for \theta
-    for (t in 1:Tt) {
-
-        # 3.2 sample theta_t (Metropolis)
-        if (t < Tt) {
-            if (t==1) {
-                res <- sample_theta_t(theta[t], theta_0, theta[t+1],
-                                      y[t], W, varsigma2, final_t=FALSE)
-            } else {
-                res <- sample_theta_t(theta[t], theta[t-1], theta[t+1],
-                                      y[t], W, varsigma2, final_t=FALSE)
-            }
-
-        } else {
-            res <- sample_theta_t(theta[t], theta[t-1], NULL,
-                                  y[t], W, varsigma2, final_t=TRUE)
-        }
-
-        theta[t] <- res$theta_t
-        ac <- res$ac # flag: sample accpeted(1) or not (0)
-        n_ac <- n_ac + ac
-    }
-
-    # Mean acceptance ratio of theta
-    ac_theta_hist[n] <- n_ac/Tt
+    # Sample theta (Chan)
+    theta <- chan_sample(y, V, W, theta_0)
 
     # Store the sampled values
     theta_0_hist[n] <- theta_0
+    V_hist[n] <- V
     W_hist[n] <- W
     theta_hist[n, ] <- theta
 }
@@ -196,43 +166,64 @@ for (n in 1:N) {
 end_time <- proc.time()
 elapsed_time <- (end_time - start_time)[[3]]
 printf("Execution time: %.0f s", elapsed_time)
-printf("Mean acception ratio of theta: %.2f", mean(ac_theta_hist))
+
 
 # Posterior mean
 theta_mean <- colMeans(theta_hist[-(1:burnin), ])
-lambda_mean <- exp(theta_mean)
+
+V_mean <- mean(V_hist[-(1:burnin)])
+V_median <- median(V_hist[-(1:burnin)])
+if (theta_sim_available) printf("V true: %.5f", V_true)
+printf("V mean: %.5f", V_mean)
+printf("V median: %.5f", V_median)
+
 W_mean <- mean(W_hist[-(1:burnin)])
 W_median <- median(W_hist[-(1:burnin)])
+if (theta_sim_available) printf("W true: %.5f", W_true)
 printf("W mean: %.5f", W_mean)
 printf("W median: %.5f", W_median)
 
+
 # Log-likelihood
-loglik <- sum(dpois(y, lambda_mean, log=TRUE))
+loglik <- sum(dnorm(y, mean=theta_mean, sd = sqrt(V_mean), log=TRUE))
 printf("Log-likelihood: %.2f", loglik)
+
 
 # Effective sample size
 printf("Effective Sample Size:")
-ess_w <- effectiveSize(mcmc(W_hist[-(1:burnin)]))
-printf("\tW: %.0f", ess_w)
+ess_V <- effectiveSize(mcmc(V_hist[-(1:burnin)]))
+ess_W <- effectiveSize(mcmc(W_hist[-(1:burnin)]))
+printf("\tV: %.0f", ess_V)
+printf("\tW: %.0f", ess_W)
 
 ess_theta <- effectiveSize(mcmc(theta_hist[-(1:burnin),]))
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
 plot(ess_theta, type="l", main=expression("Effective sample size of " * theta[t]), xlab="t")
 hist(ess_theta)
-printf("\ttheta (mean): %.0f", mean(ess_theta))
+ess_theta_mean <-mean(ess_theta)
+printf("\ttheta (mean): %.0f", ess_theta_mean)
+
 
 # Effective sample size per second
 printf("Effective Sample Size / second:")
-printf("\tW: %.2f", ess_w/elapsed_time)
-ess_s <- ess_theta/elapsed_time
+printf("\tV: %.2f", ess_V/elapsed_time)
+printf("\tW: %.2f", ess_W/elapsed_time)
+printf("\ttheta (mean): %.2f", ess_theta_mean/elapsed_time)
+
+ess_s_theta <- ess_theta/elapsed_time
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
-plot(ess_s, type="l", main=expression("Effective sample size per second of " * theta[t]), xlab="t")
+plot(ess_s_theta, type="l", main=expression("Effective sample size per second of " * theta[t]), xlab="t")
+
 
 # Geweke diagnostic: Z test for two mean difference
 #   H0: segments with different means -> chain has not converged
+z_V <- unname(geweke.diag(V_hist[-(1:burnin)], frac1=0.1, frac2=0.5)[[1]])
+z_W <- unname(geweke.diag(W_hist[-(1:burnin)], frac1=0.1, frac2=0.5)[[1]])
+
 printf("Geweke convergence diagnostic")
-z_w <- unname(geweke.diag(W_hist[-(1:burnin)], frac1=0.1, frac2=0.5)[[1]])
-printf("\tz_w: %.2f", z_w)
+printf("\tz_V: %.2f", z_V)
+printf("\tz_w: %.2f", z_W)
+
 z_theta <- unname(geweke.diag(theta_hist[-(1:burnin),], frac1=0.1, frac2=0.5)[[1]])
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
 plot(z_theta, type="l", main=expression("Geweke diagnostic for " * theta[t]),
@@ -241,17 +232,17 @@ abline(h=c(-1.96, 1.96), col="red")
 
 
 # Plots ####
-# y, lambda_true, lambda_estimated ####
+# y, theta_true, theta_mean ####
 x <- 1:Tt
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
 plot(x, y, type="l", xlab="t", ylab="", col="gray",
-     main="Poisson Local Level Polynomial Model")
+     main="Local Level Dynamic Linear Model")
 points(x, y, pch = 20)
-lines(x, lambda_mean, col="red", lwd=2)
+lines(x, theta_mean, col="red", lwd=2)
 if (theta_sim_available) {
-    lines(x, lambda_true, col="blue", lwd=2)
+    lines(x, theta_true, col="blue", lwd=2)
     legend("topright",
-           legend = expression(y[t], lambda[t], hat(lambda)[t]),
+           legend = expression(y[t], theta[t], hat(theta)[t]),
            col = c("black", "blue", "red"),
            lty = c(NA, 1, 1),
            lwd = c(NA, 2, 2),
@@ -259,7 +250,7 @@ if (theta_sim_available) {
            bty = "n")
 } else {
     legend("topright",
-           legend = expression(y[t], hat(lambda)[t]),
+           legend = expression(y[t], hat(theta)[t]),
            col = c("black", "red"),
            lty = c(NA, 1),
            lwd = c(NA, 2),
@@ -268,7 +259,7 @@ if (theta_sim_available) {
 }
 
 
-# theta_true vs theta_estimated ####
+# theta_true vs theta_mean ####
 par(mfrow=c(1,1), mar=c(4,4,2,2), cex=0.8)
 if (theta_sim_available) {
     ylim_range <- range(theta_mean, theta_true)
@@ -294,12 +285,22 @@ for (t in t_obs) {
     lines(density(theta_hist[-(1:burnin), t]), col = "blue", lwd = 2)
 }
 
+# Posterior distribution of V ####
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
+hist(V_hist[-(1:burnin)], breaks = 50, freq = FALSE,
+     xlab = bquote(theta[.(t)]), main ="Posterior of V")
+lines(density(V_hist[-(1:burnin)]), col = "blue", lwd = 2)
+
+# Traceplot for V ####
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
+plot(V_hist[-(1:burnin)], type="l", xlab="n", ylab="V", main="Traceplot of V")
+
+
 # Posterior distribution of W ####
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
 hist(W_hist[-(1:burnin)], breaks = 50, freq = FALSE,
      xlab = bquote(theta[.(t)]), main ="Posterior of W")
 lines(density(W_hist[-(1:burnin)]), col = "blue", lwd = 2)
-
 
 # Traceplot for W ####
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
@@ -311,9 +312,3 @@ par(mfrow = c(2, 2))
 for (t in t_obs) {
     plot(theta_hist[, t], type="l", main=bquote(theta[.(t)]), xlab="", ylab="")
 }
-
-
-# Traceplot for the mean acceptance ratio of theta ####
-par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
-plot(ac_theta_hist, type="l", xlab="n", ylab="ratio",
-     main=expression("Mean acceptance ratio of " * theta[t]))

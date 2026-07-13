@@ -18,7 +18,7 @@ options(error = function() traceback(2)) # more informative traceback
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source <- "poisson_model2" # rds file with data
+source <- "doppler" # rds file with data
 data <- readRDS(paste("../data/", source, ".rds", sep=""))
 y <- data$y
 theta1_true <- data$theta
@@ -56,12 +56,12 @@ mu_02     <- 1
 sigma2_02 <- 10
 
 # phi1 = W1^(-1) ~ Gamma(nu_01, eta_01)
-nu_01  <- 0.1
-eta_01 <- 0.1
+nu_01  <- 1
+eta_01 <- 0.01
 
 # phi2 = W2^(-1) ~ Gamma(nu_02, eta_02)
-nu_02  <- 0.1
-eta_02 <- 0.1
+nu_02  <- 1
+eta_02 <- 0.001
 
 N <- 100     # Number of steps
 K <- 100        # number of particles

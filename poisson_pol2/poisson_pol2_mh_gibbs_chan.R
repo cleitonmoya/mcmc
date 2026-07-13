@@ -12,26 +12,23 @@
 #  1/W2 ~ gamma(shape=nu_02, rate=eta_02)
 #
 # MCMC:
-#  Component-Wise Metropolis within Gibbs for theta_t
-#  Metropolis proposal: Random Walking
+#  theta_t1: Component-Wise Metropolis within Gibbs (Randm Walking)
+#  theta2: Chan
 #
-# Reference: Geweke, J., & Tanizaki, H. (2001).
-#    Bayesian estimation of state-space models using the
-#    Metropolis–Hastings algorithm within Gibbs sampling.
-#    Computational statistics & data analysis, 37(2), 151-170
 #
 # Author: Cleiton Moya de Almeida
 
+library(Rfast)      # provide colMedians()
+library(coda)
+library(stats)
+library(Matrix)
 
 #graphics.off()     # close the plots
 rm(list = ls())     # clear the environment
-#cat("\014")         # clear the console
+#cat("\014")        # clear the console
 tp <- Matrix::t     # matrix transpose alias
 options(error = function() traceback(2)) # more informative traceback
 set.seed(42)
-
-library(Rfast)      # provide colMedians()
-library(coda)
 
 # Change de directory to the same of the current file
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
@@ -42,10 +39,10 @@ data <- readRDS(paste("../data/", source, ".rds", sep=""))
 y <- data$y
 #y <- as.data.frame(Seatbelts)$DriversKilled
 Tt <- length(y) # dimension T
-t_obs <- c(50, 100, 150, 175)
-#t_obs <- c(250, 500, 750, 1000)
-#t_obs <- c(25, 50, 75, 100)
-#t_obs <- c(500, 1000, 1500, 2000)
+
+if (Tt == 200) t_obs <- c(50, 100, 150, 175)
+if (Tt == 2000) t_obs <- c(500, 1000, 1500, 1750)
+
 theta1_present <- TRUE
 theta2_present <- FALSE
 
@@ -120,8 +117,9 @@ sample_theta_t1 <- function(theta_t1_current, theta_tm11, theta_tp11,
     return(list(theta_t1=theta_t1, ac=ac))
 }
 
+
 #####
-# SIMULATION MAIN PARAMETERS
+# SIMULATION PARAMETERS
 
 # Prior hyperparameters
 # theta_01 ~ N(mu_01, sigma2_01)
@@ -144,6 +142,64 @@ N <- 10000           # Number of steps
 burnin <- 1000       # Number of burn-in steps
 #varsigma2 <- 0.03   # Random walkikng variance hyperparameter - Doppler
 varsigma2 <- 0.05    # Random walkikng variance hyperparameter - Poisson_pol2_200
+
+
+####
+# FIXED SPARSE STRUCTURES FOR CHAN METHOD
+
+# Base for the prior Precision Matrix K
+sub_diag_base <- rep(-1, Tt-1)
+main_diag_base <- c(rep(2, Tt-1), 1)
+K0 <- bandSparse(n=Tt, k=c(0, -1),
+                 diagonals=list(main_diag_base, sub_diag_base),
+                 symmetric = TRUE)
+
+# Initial symbolic Cholesky factor
+Ch_factor0 <- Cholesky(K0, perm = FALSE, LDL = TRUE)
+
+# Work precision matrix (static)
+P_matrix <- K0
+
+# diagonal mask
+# @x: slot of the Sparce matrix (S4 object) that contains the non-zero values
+diag_pattern <- bandSparse(n=Tt, k=c(0, -1),
+                           diagonals=list(rep(TRUE, Tt), rep(FALSE, Tt-1)),
+                           symmetric=TRUE)
+idx_diag <- which(diag_pattern@x) # index of subpattern@x which is non-zero
+
+# subdiagonal mask
+sub_pattern <- bandSparse(n=Tt, k=c(0, -1),
+                          diagonals=list(rep(FALSE, Tt), rep(TRUE, Tt-1)),
+                          symmetric=TRUE)
+idx_sub <- which(sub_pattern@x)
+
+
+#####
+# CHAN METHOD
+chan_sample <- function(y, phi_V, phi_W, theta_0) {
+
+    # Udate only the main and sub-diagonal of the P[matrix]
+    P_matrix@x[idx_diag] <- (main_diag_base * phi_W) + phi_V
+    P_matrix@x[idx_sub] <- -phi_W
+
+    # Update the Cholesky factor
+    Ch_factor <- update(Ch_factor0, P_matrix)
+
+    # Vector b)
+    b_vec <- y * phi_V
+    b_vec[1] <- b_vec[1] + (theta_0 * phi_W)
+
+    # Smoothing
+    theta_hat <- as.numeric(Matrix::solve(Ch_factor, b_vec, system = "A"))
+
+    # Sampling (LDL factorization)
+    d <- Matrix::diag(Ch_factor)
+    u <- rnorm(Tt)
+    w <- u / sqrt(d)
+    x <- as.vector(Matrix::solve(Ch_factor, w, system = "Lt"))
+
+    return(theta_hat + x)
+}
 
 # Auxiliary vectors and matrix to store the results
 vartheta1_hist <- matrix(nrow=N, ncol=Tt)
@@ -205,14 +261,11 @@ for (n in 1:N) {
     phi2 <- rgamma(1, nu_02_bar, eta_02_bar)
     W2 <- 1/phi2
 
-    # Sample theta_t1 (random walking Metropolis) and
-    #        theta_t2 ~ N()
+    # Sample theta_t1 (random walking Metropolis step)
     n_ac <- 0 # number of accepted samples
     for (t in 1:Tt) {
 
         if (t < Tt) {
-
-            sigma2_star <- (1/W1 + 2/W2)^(-1) # for theta_t2
 
             if (t==1) {
                 # theta_t11
@@ -220,17 +273,12 @@ for (n in 1:N) {
                                        vartheta2[t], theta_02,
                                        y[t], W1, varsigma2, final_t=FALSE)
                 vartheta1[t] <- res$theta_t1
-                # theta_t12
-                mu_star <- sigma2_star*((vartheta1[t+1] - vartheta1[t])/W1 +
-                                            (theta_02 + vartheta2[t+1])/W2)
             } else {
 
                 res <- sample_theta_t1(vartheta1[t], vartheta1[t-1], vartheta1[t+1],
                                        vartheta2[t], vartheta2[t-1],
                                        y[t], W1, varsigma2, final_t=FALSE)
                 vartheta1[t] <- res$theta_t1
-                mu_star <- sigma2_star*((vartheta1[t+1] - vartheta1[t])/W1 +
-                                            (vartheta2[t-1] + vartheta2[t+1])/W2)
             }
 
         } else {
@@ -238,14 +286,17 @@ for (n in 1:N) {
                                    vartheta2[t], vartheta2[t-1],
                                    y[t], W1, varsigma2, final_t=TRUE)
             vartheta1[t] <- res$theta_t1
-            mu_star <- vartheta2[t-1]
-            sigma2_star <- W2
         }
 
-        vartheta2[t] <- rnorm(1, mean=mu_star, sd=sqrt(sigma2_star))
         ac <- res$ac # flag: sample accpeted(1) or not (0)
         n_ac <- n_ac + ac
     }
+
+
+    # Sample theta_t2 (FFBS)
+    # pseudo-observation: theta_{t1} - theta_{t-1,1}
+    z <- vartheta1 - c(theta_01, vartheta1[-Tt])
+    vartheta2 <- chan_sample(z, phi1, phi2, theta_02)
 
     # Mean acceptance ratio of theta_t1
     ac_hist[n] <- n_ac/Tt
@@ -270,20 +321,17 @@ printf("Mean acception ratio of theta1: %.2f", mean(ac_hist))
 # Posterior mean
 theta1_mean <- colMeans(vartheta1_hist[-(1:burnin), ])
 theta2_mean <- colMeans(vartheta2_hist[-(1:burnin), ])
+theta2_median <- colMedians(vartheta2_hist[-(1:burnin), ])
 lambda_mean <- exp(theta1_mean)
-
-printf("W1 mean: %.5f", mean(W1_hist[-(1:burnin)]))
-printf("W1 median: %.5f", median(W1_hist[-(1:burnin)]))
+printf("W1 mean: %.3f", mean(W1_hist[-(1:burnin)]))
 printf("W2 mean: %.5f", mean(W2_hist[-(1:burnin)]))
 printf("W2 median: %.5f", median(W2_hist[-(1:burnin)]))
-
 
 # Log-likelihood
 loglik <- sum(dpois(y, lambda_mean, log=TRUE))
 printf("Log-likelihood: %.2f", loglik)
 
-
-# Effective sample size
+# Effective sample size ####
 printf("Effective Sample Size:")
 ess_w1 <- effectiveSize(mcmc(W1_hist[-(1:burnin)]))
 ess_w2 <- effectiveSize(mcmc(W2_hist[-(1:burnin)]))
@@ -292,18 +340,32 @@ printf("\tW2: %.0f", ess_w2)
 
 ess_theta1 <- effectiveSize(mcmc(vartheta1_hist[-(1:burnin),]))
 ess_theta2 <- effectiveSize(mcmc(vartheta2_hist[-(1:burnin),]))
-printf("\ttheta1 (mean): %.2f", mean(ess_theta1))
-printf("\ttheta2 (mean): %.2f", mean(ess_theta2))
+par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
+plot(ess_theta1, type="l", main=expression("Effective sample of " * theta[t1]), xlab="t")
+plot(ess_theta2, type="l", main=expression("Effective sample of " * theta[t2]), xlab="t")
 
-# Effective sample size per second
+par(mfrow = c(1, 2), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
+hist(ess_theta1)
+hist(ess_theta2)
+printf("\ttheta1 (mean): %.0f", mean(ess_theta1))
+printf("\ttheta2 (mean): %.0f", mean(ess_theta2))
+
+# Effective sample size per second ####
 printf("Effective Sample Size / second:")
 printf("\tW1: %.2f", ess_w1/elapsed_time)
 printf("\tW2: %.2f", ess_w2/elapsed_time)
 
 ess_sec_theta1 <- ess_theta1/elapsed_time
 ess_sec_theta2 <- ess_theta2/elapsed_time
-printf("\ttheta1 (mean): %.2f", mean(ess_sec_theta1))
-printf("\ttheta2 (mean): %.2f", mean(ess_sec_theta2))
+par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
+plot(ess_sec_theta1, type="l", main=expression("Effective sample size per second of " * theta[t1]), xlab="t")
+plot(ess_sec_theta2, type="l", main=expression("Effective sample size per second of " * theta[t2]), xlab="t")
+
+par(mfrow = c(1, 2), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
+hist(ess_sec_theta1)
+hist(ess_sec_theta2)
+printf("\ttheta1 (mean): %.0f", mean(ess_sec_theta1))
+printf("\ttheta2 (mean): %.0f", mean(ess_sec_theta2))
 
 
 # Geweke diagnostic: Z test for two mean difference
@@ -314,14 +376,27 @@ z_w2 <- unname(geweke.diag(W2_hist[-(1:burnin)], frac1=0.1, frac2=0.5)[[1]])
 printf("\tz_w1: %.2f", z_w1)
 printf("\tz_w2: %.2f", z_w2)
 
-# Percent of instants in the H_0 rejection region:
 z_theta1 <- unname(geweke.diag(vartheta1_hist[-(1:burnin),], frac1=0.1, frac2=0.5)[[1]])
 z_theta2 <- unname(geweke.diag(vartheta2_hist[-(1:burnin),], frac1=0.1, frac2=0.5)[[1]])
+z_theta1_mean <- mean(z_theta1)
+z_theta2_mean <- mean(z_theta2)
+printf("\tz_theta1 (mean): %.2f", z_theta1_mean)
+printf("\tz_theta2 (mean): %.2f", z_theta2_mean)
+
+# Percent of instants in the H_0 rejection region:
 z1_out <- sum((z_theta1 < -1.96) | (z_theta1 > 1.96))/Tt
 z2_out <- sum((z_theta2 < -1.96) | (z_theta2 > 1.96))/Tt
 printf("\tPercent of theta1 out: %.3f", z1_out)
 printf("\tPercent of theta2 out: %.3f", z2_out)
 
+par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
+plot(z_theta1, type="l", main=expression("Geweke diagnostic for " * theta[t1]),
+     xlab="t", ylab="Z score")
+abline(h=c(-1.96, 1.96), col="red")
+
+plot(z_theta2, type="l", main=expression("Geweke diagnostic for " * theta[t2]),
+     xlab="t", ylab="Z score")
+abline(h=c(-1.96, 1.96), col="red")
 
 #####
 # Plots
@@ -447,25 +522,3 @@ for (t in t_obs) {
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
 plot(ac_hist, type="l", xlab="n", ylab="ratio",
      main=expression("Acceptance ratio of " * theta[t*1]))
-
-
-# Effective sample size ####
-par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
-plot(ess_theta1, type="l", main=expression("Effective sample of " * theta[t1]), xlab="t")
-plot(ess_theta2, type="l", main=expression("Effective sample of " * theta[t2]), xlab="t")
-
-par(mfrow = c(1, 2), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
-hist(ess_theta1)
-hist(ess_theta2)
-
-
-# Geweke diagnostic ####
-par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
-plot(z_theta1, type="l", main=expression("Geweke diagnostic for " * theta[t1]),
-     xlab="t", ylab="Z score")
-abline(h=c(-1.96, 1.96), col="red")
-
-plot(z_theta2, type="l", main=expression("Geweke diagnostic for " * theta[t2]),
-     xlab="t", ylab="Z score")
-abline(h=c(-1.96, 1.96), col="red")
-

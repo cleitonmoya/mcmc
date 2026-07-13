@@ -5,27 +5,25 @@
 graphics.off()      # close the plots
 rm(list = ls())     # clear the environment
 cat("\014")         # clear the console
-set.seed(41)
+set.seed(42)
 
 # change de directory to the same of the current file
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
-filename <- "normal_local_level_sim3" # csv file to save the data
+filename <- "normal_local_level_sim_2000" # csv file to save the data
 
-T <- 10000
-V <- 0.5       # tau_v = 2
-W <- 1     # tau_w1 = 50
+Tt <- 2000
+V <- 10    # 0.1
+W <- 0.1   # 0.01
+
 theta_t <- 1
-
-theta <- numeric(T)
-y <- numeric(T)
+theta <- numeric(Tt)
+y <- numeric(Tt)
 
 # Simulation
-for (t in 1:T) {
-
+for (t in 1:Tt) {
     theta_t <- theta_t + rnorm(1, mean=0, sd=sqrt(W))
-    y_t <- theta_t + rnorm(1, mean=0, sd=sqrt(V))
+    y[t]  <- theta_t + rnorm(1, mean=0, sd=sqrt(V))
 
-    y[t] <- y_t
     theta[t] <- theta_t
 }
 
@@ -36,13 +34,9 @@ saveRDS(list(y = y,
              W = W),
         paste("../data/", filename, ".rds", sep=""))
 
-
 # Plot ####
-x <- 1:T
+x <- 1:Tt
 par(mar = c(4, 4, 2, 4)) # bottom left, top, right
 plot(x, y, type="l", col="gray", xlab="t", ylab=expression(y[t]))
 points(x, y, pch = 20, cex=0.5)
-lines(x, theta, col="red")
-
-#####
-plot(x, theta, type="l")
+lines(x, theta, col="blue")

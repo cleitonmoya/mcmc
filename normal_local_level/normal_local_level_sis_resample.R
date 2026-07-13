@@ -10,7 +10,7 @@ options(error = function() traceback(2)) # more informative traceback
 
 # Change de directory to the same of the current file
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
-        
+
 # Log-sum-exp auxiliary function
 logsumexp <- function(x){
     c <- max(x)
@@ -19,7 +19,7 @@ logsumexp <- function(x){
 }
 
 # Load the data
-source <- "normal_local_level_sim1" # csv file with data
+source <- "normal_local_level_sim_200" # csv file with data
 data <- readRDS(paste("../data/", source, ".rds", sep=""))
 y <- data$y
 T <-length(y)

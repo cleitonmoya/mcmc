@@ -20,7 +20,7 @@ logsumexp <- function(x){
 }
 
 # Load the data
-source <- "normal_local_level_sim1" # csv file with data
+source <- "normal_local_level_sim_200" # csv file with data
 data <- readRDS(paste("../data/", source, ".rds", sep=""))
 y <- data$y
 T <-length(y)

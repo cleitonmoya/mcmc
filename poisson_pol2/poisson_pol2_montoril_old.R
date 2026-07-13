@@ -8,7 +8,6 @@
 
 library(Rfast)      # provide colMedians()
 library(coda)
-library(stats)
 
 graphics.off()      # close the plots
 rm(list = ls())     # clear the environment
@@ -21,10 +20,12 @@ options(error = function() traceback(2)) # more informative traceback
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source <- "poisson_sin_2000" # rds file with data
-data <- readRDS(paste("../data/", source, ".rds", sep=""))
-y <- data$y
-theta_true <- data$theta
+source <- "poisson_pol2_sim1" # csv file with data
+df <- read.table(paste("../data/", source, ".csv", sep=""), header = TRUE)
+y <- df$y
+theta1_true <- df$theta1
+theta2_true <- df$theta2
+
 Tt <- length(y) # dimension T
 
 # Print auxiliary function
@@ -108,15 +109,15 @@ mu_02     <- 0.1
 sigma2_02 <- 1
 
 # phi1 = W1^(-1) ~ Gamma(nu_01, eta_01)
-nu_01  <- 2
+nu_01  <- 0.01
 eta_01 <- 0.01
 
 # phi2 = W2^(-1) ~ Gamma(nu_02, eta_02)
-nu_02  <- 2
+nu_02  <- 0.01
 eta_02 <- 0.01
 
-N <- 10000           # Number of steps
-varsigma2 <- 0.5     # Random walkikng variance hyperparameter
+N <- 11000           # Number of steps
+varsigma2 <- 0.07    # Random walkikng variance hyperparameter
 burnin <- 1000       # Number of burn-in steps
 
 # Auxiliary vectors and matrix to store the results
@@ -134,13 +135,14 @@ ac_hist <- numeric(N)
 # Initialization
 vartheta1_init <- log(y + 0.5)
 
+library(stats)
 vartheta1_smooth <- filter(vartheta1_init, rep(1/5, 5), sides=2)
 vartheta1_smooth[is.na(vartheta1_smooth)] <- vartheta1_init[is.na(vartheta1_smooth)]
 vartheta2_init <- c(diff(vartheta1_smooth), 0)
 
 #vartheta2_init <- c(diff(vartheta1_init), 0)  # diferenças de theta1
-W2 <- 0.01
-W1 <- 0.01
+W2 <- var(diff(vartheta2_init)) + 1e-6        # escala compatível
+W1 <- var(diff(vartheta1_init))
 phi1 <- 1/W1
 phi2 <- 1/W2
 vartheta1 <- as.matrix(vartheta1_init)
@@ -159,16 +161,15 @@ for (n in 1:N) {
     }
 
     # Sample theta_01
-    #sigma2_01_bar <- (1/sigma2_01 + 1/W1)^(-1)
-    #mu_01_bar <- sigma2_01_bar*(mu_01/sigma2_01 + (vartheta1[1]-theta_02)/W1)
-    #theta_01 <- rnorm(1, mean=mu_01_bar, sd=sqrt(sigma2_01_bar))
-    #theta_01 <- rnorm(1, mean=mu_01, sd=sqrt(sigma2_01))
+    sigma2_01_bar <- (1/sigma2_01 + 1/W1)^(-1)
+    mu_01_bar <- sigma2_01_bar*(mu_01/sigma2_01 + (vartheta1[1]-theta_02)/W1)
+    theta_01 <- rnorm(1, mean=mu_01_bar, sd=sqrt(sigma2_01_bar))
 
     # Sample theta_02
-    #sigma2_02_bar <- (1/sigma2_02 + 1/W1 + 1/W2)^(-1)
-    #mu_02_bar <- sigma2_02_bar*((vartheta1[1]-theta_01)/W1 + vartheta2[1]/W2 + mu_02/sigma2_02)
-    #theta_02 <- rnorm(1, mean=mu_02_bar, sd=sqrt(sigma2_02_bar))
-    #theta_02 <- rnorm(1, mean=mu_02, sd=sqrt(sigma2_02))
+    sigma2_02_bar <- (1/sigma2_02 + 1/W1 + 1/W2)^(-1)
+    mu_02_bar <- sigma2_02_bar*((vartheta1[1]-theta_01)/W1 +
+                                    vartheta2[1]/W2 + mu_02/sigma2_02)
+    theta_02 <- rnorm(1, mean=mu_02_bar, sd=sqrt(sigma2_02_bar))
 
     # Sample phi1
     nu_01_bar <- nu_01 + Tt/2
@@ -185,46 +186,45 @@ for (n in 1:N) {
     phi2 <- rgamma(1, nu_02_bar, eta_02_bar)
     W2 <- 1/phi2
 
-    # Sample theta_t1 (random walking Metropolis) and
-    #        theta_t2 ~ N()
+
     n_ac <- 0 # number of accepted samples
+
+    # Sample vartheta2 | vartheta1
     for (t in 1:Tt) {
-
         if (t < Tt) {
-
-            sigma2_star <- (1/W1 + 2/W2)^(-1) # for theta_t2
-
-            if (t==1) {
-                # theta_t11
-                res <- sample_theta_t1(vartheta1[t], theta_01, vartheta1[t+1],
-                                       vartheta2[t], theta_02,
-                                       y[t], W1, varsigma2, final_t=FALSE)
-                vartheta1[t] <- res$theta_t1
-                # theta_t12
-                mu_star <- sigma2_star*((vartheta1[t+1] - vartheta1[t])/W1 +
-                                            (theta_02 + vartheta2[t+1])/W2)
+            sigma2_star <- (1/W1 + 2/W2)^(-1)
+            if (t == 1) {
+                mu_star <- sigma2_star * ((vartheta1[t+1] - vartheta1[t])/W1 +
+                                              (theta_02 + vartheta2[t+1])/W2)
             } else {
-
-                res <- sample_theta_t1(vartheta1[t], vartheta1[t-1], vartheta1[t+1],
-                                       vartheta2[t], vartheta2[t-1],
-                                       y[t], W1, varsigma2, final_t=FALSE)
-                vartheta1[t] <- res$theta_t1
-                mu_star <- sigma2_star*((vartheta1[t+1] - vartheta1[t])/W1 +
-                                            (vartheta2[t-1] + vartheta2[t+1])/W2)
+                mu_star <- sigma2_star * ((vartheta1[t+1] - vartheta1[t])/W1 +
+                                              (vartheta2[t-1] + vartheta2[t+1])/W2)
             }
+        } else {
+            mu_star    <- vartheta2[t-1]
+            sigma2_star <- W2
+        }
+        vartheta2[t] <- rnorm(1, mean=mu_star, sd=sqrt(sigma2_star))
+    }
 
+    # sample vartheta1 | vartheta2 (CWMH)
+    n_ac <- 0
+    for (t in 1:Tt) {
+        if (t == 1) {
+            res <- sample_theta_t1(vartheta1[t], theta_01, vartheta1[t+1],
+                                   vartheta2[t], theta_02,
+                                   y[t], W1, varsigma2, final_t=FALSE)
+        } else if (t < Tt) {
+            res <- sample_theta_t1(vartheta1[t], vartheta1[t-1], vartheta1[t+1],
+                                   vartheta2[t], vartheta2[t-1],
+                                   y[t], W1, varsigma2, final_t=FALSE)
         } else {
             res <- sample_theta_t1(vartheta1[t], vartheta1[t-1], NULL,
                                    vartheta2[t], vartheta2[t-1],
                                    y[t], W1, varsigma2, final_t=TRUE)
-            vartheta1[t] <- res$theta_t1
-            mu_star <- vartheta2[t-1]
-            sigma2_star <- W2
         }
-
-        vartheta2[t] <- rnorm(1, mean=mu_star, sd=sqrt(sigma2_star))
-        ac <- res$ac # flag: sample accpeted(1) or not (0)
-        n_ac <- n_ac + ac
+        vartheta1[t] <- res$theta_t1
+        n_ac <- n_ac + res$ac
     }
 
     # Mean acceptance ratio of theta_t1
@@ -264,7 +264,7 @@ ess_w2 <- effectiveSize(mcmc(W2_hist[-(1:burnin)]))
 printf("\tW1: %.0f", ess_w1)
 printf("\tW2: %.0f", ess_w2)
 
-observed_times <- c(10, 50, 100, 150)
+observed_times <- c(50, 100, 200, 250)
 
 for (t in observed_times) {
     ess <- effectiveSize(mcmc(vartheta1_hist[-(1:burnin),t]))
@@ -296,7 +296,7 @@ for (t in observed_times) {
 #####
 # Plots
 # y, lambda_true, lambda_estimated
-lambda_true <- exp(theta_true)
+lambda_true <- exp(theta1_true)
 x <- 1:Tt
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
 plot(x, y, type="l", xlab="t", ylab="", col="gray",
@@ -316,9 +316,9 @@ legend("topright",
 # y, theta1_true, theta1_mean ####
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
 plot(x, theta1_mean, type="l", ylab="", col="blue", lwd=2)
-lines(x, theta_true)
+lines(x, theta1_true)
 legend("topright",
-       legend = expression(theta[t1], hat(theta)[t1]),
+       legend = expression(theta[t2], hat(theta)[t2]),
        col = c("black", "blue"),
        lty = c(1, 1),
        lwd = c(1, 2),
@@ -328,6 +328,7 @@ legend("topright",
 # y, theta2_true, theta2_mean ####
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
 plot(x, theta2_mean, type="l", ylab="", col="blue", lwd=2)
+lines(x, theta2_true)
 legend("topright",
        legend = expression(theta[t2], hat(theta)[t2]),
        col = c("black", "blue"),

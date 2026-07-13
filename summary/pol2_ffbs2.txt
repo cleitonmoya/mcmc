@@ -1,34 +1,60 @@
-Execution time: 183 s 
-V mean: 0.47 
-V median: 0.46 
+Execution time: 101 s 
+V mean: 0.53 
+V median: 0.53 
 V true: 0.50 
-W1 mean: 0.018 
-W1 median: 0.01404 
-W1 true: 0.02 
-W2 mean: 0.00447 
-W2 median: 0.00425 
-W2 true: 0.00500 
+W1 mean: 0.012 
+W1 median: 0.00707 
+W1 true: 0.00 
+W2 mean: 0.02226 
+W2 median: 0.02123 
+W2 true: 0.05000 
 Effective Sample Size: 
-	V:  1490 
-	W1: 31 
-	W2: 159 
-	theta 50,1: 2445 
-	theta 100,1: 3770 
-	theta 150,1: 3806 
-	theta 250,1: 3731 
-	theta 50,2: 4281 
-	theta 100,2: 4000 
+	V:  1998 
+	W1: 28 
+	W2: 273 
+	theta 50,1: 3116 
+	theta 100,1: 4594 
+	theta 150,1: 4000 
+8: (function () 
+   traceback(2))() at normal_pol2_ffbs.R#262
+7: mcmc(theta1_samples[-(1:burnin), t]) at normal_pol2_ffbs.R#262
+6: is.mcmc.list(x)
+5: effectiveSize(mcmc(theta1_samples[-(1:burnin), t])) at normal_pol2_ffbs.R#262
+4: eval(ei, envir)
+3: eval(ei, envir)
+2: withVisible(eval(ei, envir))
+1: source("~/R/mcmc/normal_pol2/normal_pol2_ffbs.R")
+Execution time: 101 s 
+V mean: 0.53 
+V median: 0.53 
+V true: 0.50 
+W1 mean: 0.012 
+W1 median: 0.00707 
+W1 true: 0.00 
+W2 mean: 0.02226 
+W2 median: 0.02123 
+W2 true: 0.05000 
+Effective Sample Size: 
+	V:  1998 
+	W1: 28 
+	W2: 273 
+	theta 50,1: 3116 
+	theta 100,1: 4594 
+	theta 150,1: 4000 
+	theta 175,1: 4000 
+	theta 50,2: 3639 
+	theta 100,2: 4226 
 	theta 150,2: 4000 
-	theta 250,2: 3838 
+	theta 175,2: 3593 
 Effective Sample Size / second: 
-	V1: 8.15 
-	W1: 0.17 
-	W2: 0.87 
-	theta 50,1: 13.37 
-	theta 100,1: 20.62 
-	theta 150,1: 20.81 
-	theta 250,1: 20.40 
-	theta 50,2: 23.41 
-	theta 100,2: 21.87 
-	theta 150,2: 21.87 
-	theta 250,2: 20.99 
+	V1: 19.81 
+	W1: 0.28 
+	W2: 2.71 
+	theta 50,1: 30.89 
+	theta 100,1: 45.55 
+	theta 150,1: 39.66 
+	theta 175,1: 39.66 
+	theta 50,2: 36.08 
+	theta 100,2: 41.90 
+	theta 150,2: 39.66 
+	theta 175,2: 35.63 

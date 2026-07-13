@@ -9,21 +9,21 @@ set.seed(42)
 
 # change de directory to the same of the current file
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
-filename <- "normal_pol2_sim2" # csv file to save the data
+filename <- "normal_pol2_sim_2000" # csv file to save the data
 
-T <- 300
-V <- 0.5       # tau_v = 2
+Tt <- 2000
+V <- 1000
 theta_t1 <- 1
 theta_t2 <- 1
-W1 <- 0.02     # tau_w1 = 50
-W2 <- 0.005    # tau1 = 200
+W1 <- 1
+W2 <- 0.05
 
-theta1 <- numeric(T)
-theta2 <- numeric(T)
-y <- numeric(T)
+theta1 <- numeric(Tt)
+theta2 <- numeric(Tt)
+y <- numeric(Tt)
 
 # Simulation
-for (t in 1:T) {
+for (t in 1:Tt) {
 
     theta_t1 <- theta_t1 + theta_t2 + rnorm(1, mean=0, sd=sqrt(W1))
     theta_t2 <-            theta_t2 + rnorm(1, mean=0, sd=sqrt(W2))
@@ -35,18 +35,20 @@ for (t in 1:T) {
 }
 
 # Save the data ####
-df <- data.frame(y, theta1, theta2, V, W1, W2)
-write.table(df, file = paste("../data/", filename, ".csv", sep=""),
-            row.names=FALSE, col.names=c("y", "theta1", "theta2",
-                                         "V", "W1", "W2"))
+saveRDS(list(y = y,
+             theta1 = theta1,
+             theta2 = theta2,
+             V = V,
+             W1 = W1,
+             W2 = W2),
+        paste("../data/", filename, ".rds", sep=""))
 
 # Plot ####
-x <- 1:T
-par(mar = c(4, 4, 2, 4)) # bottom left, top, right
+x <- 1:Tt
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 4), cex=0.8) # bottom left, top, right
 plot(x, y, type="l", col="gray", xlab="t", ylab=expression(y[t]))
 points(x, y, pch = 20, cex=0.5)
 lines(x, theta1, col="red")
 
-#####
 plot(x, theta1, type="l")
 plot(x, theta2, type="l")
