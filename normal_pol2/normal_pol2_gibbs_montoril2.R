@@ -13,13 +13,12 @@
 #  1/W2 | D_0 ~ gamma(shape=nu_02, rate=eta_02)
 #
 # MCMC:
-#  Precision Sampler within Gibbs
+#  Precision Sampler (Montoril Proposal) within Gibbs
 #
 # Reference:
-#  Chan, J. C. C., & Jeliazkov, I. (2009). Efficient simulation and integrated
-#  likelihood estimation in state space models. International Journal of
-#  Mathematical Modelling and Numerical Optimisation, 1(1/2), 101.
-#  https://doi.org/10.1504/IJMMNO.2009.030090
+#  Montoril, M. H., Correia, L. T., & Migon, H. S. (2022).
+#  Bayesian estimation of dynamic weights in Gaussian mixture models
+#  (arXiv:2104.03395). arXiv. https://doi.org/10.48550/arXiv.2104.03395
 #
 # Author: Cleiton Moya de Almeida
 
