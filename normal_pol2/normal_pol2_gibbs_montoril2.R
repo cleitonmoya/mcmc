@@ -53,7 +53,6 @@ W2_true <- data$W2
 Tt <- length(y) # dimension Tt
 if (Tt == 200)  t_obs <- c(50, 100, 150, 175)
 if (Tt == 2000) t_obs <- c(500, 1000, 1050, 1075)
-N_total <- 2 * Tt   # Dimensão total do vetor de estados (p * T)
 
 
 # SIMULATION PARAMETERS
@@ -110,88 +109,94 @@ start_time = proc.time() # execution time
 # FIXED SPARSE STRUCTURES FOR CHAN METHOD ####
 
 # Base for the prior Precision Matrix K
-main_diag_base <- rep(1, 2*Tt)
-sub1_diag_base <- rep(0, 2*Tt-1)
-sub2_diag_base <- rep(0, 2*Tt-2)
-K0 <- bandSparse(n=2*Tt, k=c(0, -1, -2),
-                 diagonals=list(main_diag_base, sub1_diag_base, sub2_diag_base),
+sub_diag_base <- rep(-1, Tt-1)
+main_diag_base <- c(rep(2, Tt-1), 1)
+K0 <- bandSparse(n=Tt, k=c(0, -1),
+                 diagonals=list(main_diag_base, sub_diag_base),
                  symmetric = TRUE)
-
-# Initial symbolic Cholesky factor
-Ch_factor0 <- Cholesky(K0, perm = FALSE, LDL = TRUE)
-
-# Work precision matrix (static)
-P_matrix <- K0
 
 # diagonal mask
 # @x: slot of the Sparce matrix (S4 object) that contains the non-zero values
-main_mask<- bandSparse(n=2*Tt, k=c(0, -1, -2),
-                           diagonals=list(rep(TRUE, 2*Tt),
-                                          rep(FALSE, 2*Tt-1),
-                                          rep(FALSE, 2*Tt-2)),
+diag_pattern <- bandSparse(n=Tt, k=c(0, -1),
+                           diagonals=list(rep(TRUE, Tt), rep(FALSE, Tt-1)),
                            symmetric=TRUE)
-idx_main <- which(main_mask@x) # index of subpattern@x which is non-zero
+idx_diag <- which(diag_pattern@x) # index of subpattern@x which is non-zero
 
-# Sub-diagonal #1 mask
-sub1_mask <- bandSparse(n=2*Tt, k=c(0, -1, -2),
-                          diagonals=list(rep(FALSE, 2*Tt),
-                                         rep(TRUE, 2*Tt-1),
-                                         rep(FALSE, 2*Tt-2)),
+# subdiagonal mask
+sub_pattern <- bandSparse(n=Tt, k=c(0, -1),
+                          diagonals=list(rep(FALSE, Tt), rep(TRUE, Tt-1)),
                           symmetric=TRUE)
-idx_sub1 <- which(sub1_mask@x)
+idx_sub <- which(sub_pattern@x)
 
-# Sub-diagonal #2 mask
-sub2_mask <- bandSparse(n=2*Tt, k=c(0, -1, -2),
-                        diagonals=list(rep(FALSE, 2*Tt),
-                                       rep(FALSE, 2*Tt-1),
-                                       rep(TRUE, 2*Tt-2)),
-                        symmetric=TRUE)
-idx_sub2 <- which(sub2_mask@x)
+# Initial symbolic Cholesky factor
+Ch01_factor <- Cholesky(K0, perm = FALSE, LDL = TRUE)
+Ch02_factor <- Cholesky(K0, perm = FALSE, LDL = TRUE)
 
-
-# Chan Method
-chan_sample <- function(y, phi_V, phi1, phi2, theta_01, theta_02) {
-
-    # Udate only the main and sub-diagonal of the P_matrix
-    main_diag_base[seq(1, 2*Tt-2, by=2)] <- 2*phi1 + phi_V
-    main_diag_base[seq(2, 2*Tt-2, by=2)] <- phi1 + 2*phi2
-    main_diag_base[2*Tt-1] <- phi1 + phi_V
-    main_diag_base[2*Tt] <- phi2
-    P_matrix@x[idx_main] <- main_diag_base
-
-    sub1_diag_base[seq(1, 2*Tt-2, by=2)] <- phi1
-    sub1_diag_base[seq(2, 2*Tt-2, by=2)] <- -phi1
-    sub1_diag_base[2*Tt-1] <- 0
-    P_matrix@x[idx_sub1] <- sub1_diag_base
-
-    sub2_diag_base[seq(1, 2*Tt-2, by=2)] <- -phi1
-    sub2_diag_base[seq(2, 2*Tt-2, by=2)] <- -phi2
-    P_matrix@x[idx_sub2] <- sub2_diag_base
-
-    # Update the Cholesky factor
-    Ch_factor <- update(Ch_factor0, P_matrix)
-
-    # Vector b)
-    b <- matrix(0, nrow=2*Tt, ncol=1)
-    b[seq(1, 2*Tt, by=2)] <- phi_V * y
-    b[1] <- b[1] + phi1*(theta_01 + theta_02)
-    b[2] <- b[2] + phi2*theta_02
-
-    # Smoothing
-    theta_hat <- as.numeric(Matrix::solve(Ch_factor, b, system = "A"))
-
-    # Sampling (LDL factorization)
-    d <- Matrix::diag(Ch_factor)
-    u <- rnorm(2*Tt)
-    w <- u / sqrt(d)
-    x <- as.vector(Matrix::solve(Ch_factor, w, system = "Lt"))
-
-    return(theta_hat + x)
-}
+# Work precision matrix (static)
+P1_matrix <- K0
+P2_matrix <- K0
 
 time1 <- proc.time()
 building_time <- (time1 - start_time)[[1]]
 printf("Sparse structures building: %.4f s", building_time)
+
+# Chan Method
+chan_sample_theta1 <- function(y, phi_V, phi1, theta_01, theta_02, theta2) {
+
+    # Udate only the main and sub-diagonal of the P[matrix]
+    P1_matrix@x[idx_diag] <- (main_diag_base * phi1) + phi_V
+    P1_matrix@x[idx_sub] <- -phi1
+
+    # DEBUG: checar antes de atualizar
+    diag_vals <- P1_matrix@x[idx_diag]
+
+    # Update the Cholesky factor
+    Ch1_factor <- update(Ch01_factor, P1_matrix)
+
+    # Vector b
+    b <- y * phi_V
+    b[1] <- b[1] + phi1*(theta_01 + theta_02)
+    Hb_theta2 <- numeric(Tt)
+    Hb_theta2[1] <- -theta2[1]
+    Hb_theta2[2:(Tt-1)] <- theta2[1:(Tt-2)] - theta2[2:(Tt-1)]
+    Hb_theta2[Tt] <- theta2[Tt-1]
+    b <- b + phi1 * Hb_theta2
+
+    # Smoothing
+    theta1_hat <- as.numeric(Matrix::solve(Ch1_factor, b, system = "A"))
+
+    # Sampling (LDL factorization)
+    d <- Matrix::diag(Ch1_factor)
+    u <- rnorm(Tt)
+    w <- u / sqrt(d)
+    x <- as.vector(Matrix::solve(Ch1_factor, w, system = "Lt"))
+
+    return(theta1_hat + x)
+}
+
+
+chan_sample_theta2 <- function(theta1, phi1, phi2, theta_02) {
+
+    z <- diff(theta1)   # z_t = theta1[t+1] - theta1[t], t=1,...,T-1
+
+    diag_obs <- c(rep(phi1, Tt-1), 0)
+    P2_matrix@x[idx_diag] <- (main_diag_base*phi2) + diag_obs
+    P2_matrix@x[idx_sub]  <- -phi2
+
+    Ch2_factor <- update(Ch02_factor, P2_matrix)
+
+    b <- numeric(Tt)
+    b[1:(Tt-1)] <- z * phi1
+    b[1] <- b[1] + theta_02 * phi2
+
+    theta2_hat <- as.numeric(Matrix::solve(Ch2_factor, b, system="A"))
+    d <- Matrix::diag(Ch2_factor)
+    u <- rnorm(Tt)
+    w <- u/sqrt(d)
+    x <- as.vector(Matrix::solve(Ch2_factor, w, system="Lt"))
+
+    return(theta2_hat + x)
+}
 
 # GIBBS LOOP ####
 
@@ -215,10 +220,10 @@ for (n in 1:N) {
     theta_02 <- rnorm(1, mean=mu_02_bar, sd=sqrt(sigma2_02_bar))
 
 
-    # Sample theta - Chan Method
-    theta_ <- chan_sample(y, phi_V, phi1, phi2, theta_01, theta_02)
-    theta1 <- theta_[seq(1, 2*Tt, by=2)]
-    theta2 <- theta_[seq(2, 2*Tt, by=2)]
+    # Sample theta1|[...] and theta2|[...]
+    theta1 <- chan_sample_theta1(y, phi_V, phi1, theta_01, theta_02, theta2)
+    theta2 <- chan_sample_theta2(theta1, phi1, phi2, theta_02)
+
 
     # Sample phi_V
     nu_V_bar <- nu_V + Tt/2
@@ -265,7 +270,6 @@ printf("Total CPU time: %.2f s", elapsed_time)
 # Posterior mean
 theta1_mean <- colMeans(theta1_hist[-(1:burnin), ])
 theta2_mean <- colMeans(theta2_hist[-(1:burnin), ])
-lambda_mean <- exp(theta1_mean)
 
 printf("\nV true: %.5f", V_true)
 printf("V mean: %.5f", mean(V_hist[-(1:burnin)]))
