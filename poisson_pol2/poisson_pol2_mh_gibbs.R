@@ -126,11 +126,11 @@ sample_theta_t1 <- function(theta_t1_current, theta_tm11, theta_tp11,
 # Prior hyperparameters
 # theta_01 ~ N(mu_01, sigma2_01)
 mu_01     <- 0
-sigma2_01 <- 10
+sigma2_01 <- 100
 
 # theta_02 ~ N(mu_2, sigma2_02)
 mu_02     <- 0
-sigma2_02 <- 10
+sigma2_02 <- 100
 
 # phi1 = W1^(-1) ~ Gamma(nu_01, eta_01)
 nu_01  <- 2
@@ -175,8 +175,8 @@ for (n in 1:N) {
 
     if (n %% 1000 == 0) {
         time <- proc.time()
-        elapsed_time <- (time - start_time)[[3]]
-        printf("Iteration %d / %d | Elapsed time: %.0f s", n, N, elapsed_time)
+        elapsed_time <- (time - start_time)[[1]]
+        printf("Iteration %d / %d | Elapsed CPU time: %.0f s", n, N, elapsed_time)
     }
 
     # Sample theta_01
@@ -262,8 +262,8 @@ for (n in 1:N) {
 # Simulation summary ####
 # Execution time
 end_time <- proc.time()
-elapsed_time <- (end_time - start_time)[[3]]
-printf("Execution time: %.0f s", elapsed_time)
+elapsed_time <- (end_time - start_time)[[1]]
+printf("Total elapsed CPU time: %.0f s", elapsed_time)
 
 printf("Mean acception ratio of theta1: %.2f", mean(ac_hist))
 
@@ -468,4 +468,3 @@ abline(h=c(-1.96, 1.96), col="red")
 plot(z_theta2, type="l", main=expression("Geweke diagnostic for " * theta[t2]),
      xlab="t", ylab="Z score")
 abline(h=c(-1.96, 1.96), col="red")
-

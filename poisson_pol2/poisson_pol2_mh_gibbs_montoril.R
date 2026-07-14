@@ -13,14 +13,14 @@
 #
 # MCMC:
 #  theta_t1: Component-Wise Metropolis within Gibbs (Randm Walking)
-#  theta2: FFBS
+#  theta2: Chan
 #
 #
 # Author: Cleiton Moya de Almeida
 
 library(Rfast)      # provide colMedians()
 library(coda)
-library(stats)
+library(Matrix)
 
 #graphics.off()     # close the plots
 rm(list = ls())     # clear the environment
@@ -116,73 +116,18 @@ sample_theta_t1 <- function(theta_t1_current, theta_tm11, theta_tp11,
     return(list(theta_t1=theta_t1, ac=ac))
 }
 
-# FFBS function for a Local Level Model
-ffbs <- function(y, m0, C0, V, W) {
-
-    Tt <- length(y)
-
-    # Auxiliary auxiiary vectors
-    theta <- numeric(Tt) # sampled theta
-    a <- numeric(Tt)
-    m <- numeric(Tt)   # m_t = E[theta_t | D_t]
-    C <- numeric(Tt)   # C_t = Var[theta_t | D_t]
-    R <- numeric(Tt)
-    B <- numeric(Tt)
-
-
-    # Forward filtering
-    # For t=1
-    a1 <- m0
-    R1 <- C0 + W
-    Q1 <- R1 + V
-    A1 <- R1 / Q1
-    e1 <- y[1] - a1
-    m[1] <- a1 + A1 * e1
-    C[1] <- (1 - A1) * R1
-    R[1] <- R1
-    a[1] <- a1
-
-    for (t in 2:Tt) {
-        at <- m[t-1]           # prior mean
-        Rt <- C[t-1] + W       # prior variance
-
-        Qt <- Rt + V           # forecast variance
-        At <- Rt / Qt          # adaptive coefficient
-        et <- y[t] - at        # forecast error
-
-        m[t] <- at + At * et   # posterior mean
-        C[t] <- (1 - At) * Rt  # posterior variance
-        R[t] <- Rt
-        a[t] <- at
-
-        # Backward matrix (for backward sampling)
-        B[t-1] <- C[t-1] / R[t]
-    }
-
-    # Backward sampling
-    # For t=T
-    theta[Tt] <- rnorm(1, mean=m[Tt], sd=sqrt(C[Tt]))
-
-    for (t in seq(Tt-1,1)) {
-        mu <- m[t] + B[t] * (theta[t+1] - a[t+1])
-        sigma2 <- C[t] - B[t]**2 * R[t+1]
-        theta[t] <- rnorm(1, mean=mu, sd=sqrt(sigma2))
-    }
-
-    return(theta)
-}
 
 #####
-# SIMULATION MAIN PARAMETERS
+# SIMULATION PARAMETERS
 
 # Prior hyperparameters
 # theta_01 ~ N(mu_01, sigma2_01)
 mu_01     <- 0
-sigma2_01 <- 10
+sigma2_01 <- 100
 
 # theta_02 ~ N(mu_2, sigma2_02)
 mu_02     <- 0
-sigma2_02 <- 10
+sigma2_02 <- 100
 
 # phi1 = W1^(-1) ~ Gamma(nu_01, eta_01)
 nu_01  <- 2
@@ -196,6 +141,67 @@ N <- 10000           # Number of steps
 burnin <- 1000       # Number of burn-in steps
 #varsigma2 <- 0.03   # Random walkikng variance hyperparameter - Doppler
 varsigma2 <- 0.05    # Random walkikng variance hyperparameter - Poisson_pol2_200
+
+
+#####
+# FIXED SPARSE STRUCTURES FOR CHAN METHOD ####
+start_time = proc.time() # execution time
+
+# Base for the prior Precision Matrix K
+sub_diag_base <- rep(-1, Tt-1)
+main_diag_base <- c(rep(2, Tt-1), 1)
+K0 <- bandSparse(n=Tt, k=c(0, -1),
+                 diagonals=list(main_diag_base, sub_diag_base),
+                 symmetric = TRUE)
+
+# diagonal mask
+# @x: slot of the Sparce matrix (S4 object) that contains the non-zero values
+diag_pattern <- bandSparse(n=Tt, k=c(0, -1),
+                           diagonals=list(rep(TRUE, Tt), rep(FALSE, Tt-1)),
+                           symmetric=TRUE)
+idx_diag <- which(diag_pattern@x) # index of subpattern@x which is non-zero
+
+# subdiagonal mask
+sub_pattern <- bandSparse(n=Tt, k=c(0, -1),
+                          diagonals=list(rep(FALSE, Tt), rep(TRUE, Tt-1)),
+                          symmetric=TRUE)
+idx_sub <- which(sub_pattern@x)
+
+# Initial symbolic Cholesky factor
+Ch02_factor <- Cholesky(K0, perm = FALSE, LDL = TRUE)
+
+# Work precision matrix (static)
+P2_matrix <- K0
+
+time1 <- proc.time()
+building_time <- (time1 - start_time)[[1]]
+printf("Sparse structures building: %.4f s", building_time)
+
+#####
+# CHAN METHOD
+chan_sample_theta2 <- function(theta1, phi1, phi2, theta_02) {
+
+    z <- diff(theta1)   # z_t = theta1[t+1] - theta1[t], t=1,...,T-1
+
+    diag_obs <- c(rep(phi1, Tt-1), 0)
+    P2_matrix@x[idx_diag] <- (main_diag_base*phi2) + diag_obs
+    P2_matrix@x[idx_sub]  <- -phi2
+
+    Ch2_factor <- update(Ch02_factor, P2_matrix)
+
+    b <- numeric(Tt)
+    b[1:(Tt-1)] <- z * phi1
+    b[1] <- b[1] + theta_02 * phi2
+
+    theta2_hat <- as.numeric(Matrix::solve(Ch2_factor, b, system="A"))
+    d <- Matrix::diag(Ch2_factor)
+    u <- rnorm(Tt)
+    w <- u/sqrt(d)
+    x <- as.vector(Matrix::solve(Ch2_factor, w, system="Lt"))
+
+    return(theta2_hat + x)
+}
+
 
 # Auxiliary vectors and matrix to store the results
 vartheta1_hist <- matrix(nrow=N, ncol=Tt)
@@ -228,7 +234,7 @@ for (n in 1:N) {
     if (n %% 1000 == 0) {
         time <- proc.time()
         elapsed_time <- (time - start_time)[[1]]
-        printf("Iteration %d / %d | Elapsed CPU time: %.0f s", n, N, elapsed_time)
+        printf("Iteration %d / %d | Elapsed time: %.0f s", n, N, elapsed_time)
     }
 
     # Sample theta_01
@@ -284,15 +290,13 @@ for (n in 1:N) {
             vartheta1[t] <- res$theta_t1
         }
 
-        ac <- res$ac # flag: sample accepted (1) or not (0)
+        ac <- res$ac # flag: sample accpeted(1) or not (0)
         n_ac <- n_ac + ac
     }
 
-    # Sample theta_t2 (FFBS)
-    # pseudo-observation: z_t = theta_{t1} - theta_{t-1,1}, t=2,..T
-    z <- diff(vartheta1)
-    vartheta2[1:(Tt-1)] <- ffbs(z, theta_02, 0, W1, W2)
-    vartheta2[Tt] <- rnorm(1, vartheta2[Tt-1], sqrt(W2))
+
+    # Sample theta_t2 (Chan Method)
+    vartheta2 <- chan_sample_theta2(vartheta1, phi1, phi2, theta_02)
 
     # Mean acceptance ratio of theta_t1
     ac_hist[n] <- n_ac/Tt
@@ -309,8 +313,10 @@ for (n in 1:N) {
 # Simulation summary ####
 # Execution time
 end_time <- proc.time()
+sampling_time <- (end_time - time1)[[1]]
 elapsed_time <- (end_time - start_time)[[1]]
-printf("Total elapsed CPU time: %.0f s", elapsed_time)
+printf("Sampling: %.2f s", sampling_time)
+printf("Total CPU time: %.0f s", elapsed_time)
 
 printf("Mean acception ratio of theta1: %.2f", mean(ac_hist))
 
@@ -371,6 +377,7 @@ z_w1 <- unname(geweke.diag(W1_hist[-(1:burnin)], frac1=0.1, frac2=0.5)[[1]])
 z_w2 <- unname(geweke.diag(W2_hist[-(1:burnin)], frac1=0.1, frac2=0.5)[[1]])
 printf("\tz_w1: %.2f", z_w1)
 printf("\tz_w2: %.2f", z_w2)
+
 z_theta1 <- unname(geweke.diag(vartheta1_hist[-(1:burnin),], frac1=0.1, frac2=0.5)[[1]])
 z_theta2 <- unname(geweke.diag(vartheta2_hist[-(1:burnin),], frac1=0.1, frac2=0.5)[[1]])
 

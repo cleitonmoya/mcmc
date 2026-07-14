@@ -263,7 +263,7 @@ elapsed_time <- (end_time - start_time)[[1]]
 # SIMULATION SUMMARY ####
 # Execution time
 printf("Sampling: %.2f s", sampling_time)
-printf("Total CPU time: %.2f s", elapsed_time)
+printf("Total elapsed CPU time: %.2f s", elapsed_time)
 
 
 # Posterior mean

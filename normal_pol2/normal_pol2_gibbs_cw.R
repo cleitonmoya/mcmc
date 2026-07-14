@@ -98,7 +98,7 @@ for (n in 1:N) {
 
     if (n %% 1000 == 0) {
         time <- proc.time()
-        elapsed_time <- (time - start_time)[[3]]
+        elapsed_time <- (time - start_time)[[1]]
         printf("Iteration %d / %d | Elapsed time: %.0f s", n, N, elapsed_time)
     }
 
@@ -181,7 +181,7 @@ for (n in 1:N) {
 
 }
 end_time <- proc.time()
-elapsed_time <- (end_time - start_time)[[3]]
+elapsed_time <- (end_time - start_time)[[1]]
 
 # Simulation summary ####
 # Execution time
