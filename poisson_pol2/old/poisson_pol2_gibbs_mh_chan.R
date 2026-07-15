@@ -136,7 +136,7 @@ eta_01 <- 0.01
 
 # phi2 = W2^(-1) ~ Gamma(nu_02, eta_02)
 nu_02  <- 2
-eta_02 <- 0.01
+eta_02 <- 0.0001
 
 N <- 10000           # Number of steps
 burnin <- 1000       # Number of burn-in steps

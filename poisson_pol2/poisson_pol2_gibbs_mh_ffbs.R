@@ -129,32 +129,22 @@ ffbs <- function(y, m0, C0, V, W) {
     R <- numeric(Tt)
     B <- numeric(Tt)
 
-
     # Forward filtering
-    # For t=1
-    a1 <- m0
-    R1 <- C0 + W
-    Q1 <- R1 + V
-    A1 <- R1 / Q1
-    e1 <- y[1] - a1
-    m[1] <- a1 + A1 * e1
-    C[1] <- (1 - A1) * R1
-    R[1] <- R1
-    a[1] <- a1
+    mt <- m0
+    Ct <- C0
 
-    for (t in 2:Tt) {
-        at <- m[t-1]           # prior mean
-        Rt <- C[t-1] + W       # prior variance
+    for (t in 1:Tt) {
+        at <- mt                  # prior mean
+        Rt <- Ct + W              # prior variance
 
-        Qt <- Rt + V           # forecast variance
-        At <- Rt / Qt          # adaptive coefficient
-        et <- y[t] - at        # forecast error
+        Qt <- Rt + V              # forecast variance
+        At <- Rt / Qt             # adaptive coefficient
 
-        m[t] <- at + At * et   # posterior mean
-        C[t] <- (1 - At) * Rt  # posterior variance
-        R[t] <- Rt
+        m[t] <- at + At*(y[t] - at) # posterior mean
+        C[t] <- Rt*(1 - At)         # posterior variance
+
         a[t] <- at
-
+        R[t] <- Rt
     }
 
     # Backward matrix (for backward sampling)
@@ -526,6 +516,7 @@ for (t in t_obs) {
 }
 
 # Prior vs posterior for phi2
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
 curve(dgamma(x, shape=nu_02, rate=eta_02), from=0, to=max(1/W2_hist[-(1:burnin)]),
       main="phi2 prior vs. posterior", col="red", lwd=2)
 lines(density(1/W2_hist[-(1:burnin)]), col="blue", lwd=2)
