@@ -155,18 +155,20 @@ ffbs <- function(y, m0, C0, V, W) {
         R[t] <- Rt
         a[t] <- at
 
-        # Backward matrix (for backward sampling)
-        B[t-1] <- C[t-1] / R[t]
     }
+
+    # Backward matrix (for backward sampling)
+    B <- C[-Tt] / R[-1]
 
     # Backward sampling
     # For t=T
     theta[Tt] <- rnorm(1, mean=m[Tt], sd=sqrt(C[Tt]))
 
+    H <- C[-Tt] - B^2 * R[-1]
+    sH  <- sqrt(H)
     for (t in seq(Tt-1,1)) {
         mu <- m[t] + B[t] * (theta[t+1] - a[t+1])
-        sigma2 <- C[t] - B[t]**2 * R[t+1]
-        theta[t] <- rnorm(1, mean=mu, sd=sqrt(sigma2))
+        theta[t] <- rnorm(1, mean=mu, sd=sH[t])
     }
 
     return(theta)

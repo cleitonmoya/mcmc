@@ -97,10 +97,6 @@ ffbs <- function(y, V, W, theta_0) {
     # Forward filtering
     # For t=1
 
-    # for theta1 marginalized over theta_0
-    #a1 <- m0 #
-    #R1 <- C0 + W
-
     # conditioning in theta_0
     a1 <- theta_0
     R1 <- W
