@@ -95,7 +95,6 @@ forward_filter <- function(theta_01, theta_02, W1, W2, y, V) {
     list(a1=a1v,a2=a2v,R11=R11v,R12=R12v,R22=R22v,m1=m1v,m2=m2v,c11=c11v,c12=c12v,c22=c22v)
 }
 
-
 # FFBS
 sample_theta_ffbs <- function(theta_01, theta_02, W1, W2, y, V) {
     f <- forward_filter(theta_01, theta_02, W1, W2, y, V)

@@ -18,12 +18,13 @@ options(error = function() traceback(2)) # more informative traceback
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source <- "doppler" # rds file with data
+source <- "poisson_pol2_200" # rds file with data
 data <- readRDS(paste("../data/", source, ".rds", sep=""))
 y <- data$y
 theta1_true <- data$theta
 Tt <- length(y) # dimension T
-t_observed <- c(50, 75, 100, 150)
+if (Tt == 200) t_obs <- c(50, 100, 150, 175)
+if (Tt == 2000) t_obs <- c(500, 1000, 1500, 1750)
 
 # Print auxiliary function
 printf <- function(...) {
@@ -229,14 +230,14 @@ plot(W2_hist, type="l", xlab="n", ylab="W", main="Traceplot of W2")
 
 # Traceplot for theta1_star_hist #####
 par(mfrow = c(2, 2))
-for (t in t_observed) {
+for (t in t_obs) {
   plot(theta1_star_hist[, t], type="l",
        main=bquote(theta[list(.(t), 1)]), xlab="n", ylab="")
 }
 
 # Traceplot for theta2_star_hist #####
 par(mfrow = c(2, 2))
-for (t in t_observed) {
+for (t in t_obs) {
   plot(theta2_star_hist[, t], type="l",
        main=bquote(theta[list(.(t), 2)]), xlab="n", ylab="")
 }

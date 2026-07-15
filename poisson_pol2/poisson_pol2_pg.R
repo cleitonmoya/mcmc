@@ -4,6 +4,7 @@
 #    Particle Markov Chain Monte Carlo Methods. Journal of the Royal
 #    Statistical Society Series B: Statistical Methodology, 72(3), 269–342.
 #    https://doi.org/10.1111/j.1467-9868.2009.00736.x
+#  NÃO CONSEGUE ESTABILIZAR
 # Author: Cleiton Moya de Almeida
 
 
@@ -18,11 +19,14 @@ options(error = function() traceback(2)) # more informative traceback
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source <- "poisson_sin_200" # rds file with data
+source <- "poisson_pol2_200" # rds file with data
 data <- readRDS(paste("../data/", source, ".rds", sep=""))
 y <- data$y
 theta1_true <- data$theta
+
 Tt <- length(y) # dimension T
+if (Tt == 200) t_obs <- c(50, 100, 150, 175)
+if (Tt == 2000) t_obs <- c(500, 1000, 1500, 1750)
 
 # Print auxiliary function
 printf <- function(...) {
@@ -62,22 +66,22 @@ log_p_yt <- function(yt, theta_t1) {
 # Prior hyperparameters
 # theta_01 ~ N(mu_01, sigma2_01)
 mu_01     <- log(y[1] + 0.5)
-sigma2_01 <- 10
+sigma2_01 <- 100
 
 # theta_02 ~ N(mu_2, sigma2_02)
 mu_02     <- 1
-sigma2_02 <- 10
+sigma2_02 <- 100
 
 # phi1 = W1^(-1) ~ Gamma(nu_01, eta_01)
-nu_01  <- 2
-eta_01 <- 0.1
+nu_01  <- 1
+eta_01 <- 1
 
 # phi2 = W2^(-1) ~ Gamma(nu_02, eta_02)
-nu_02  <- 2
-eta_02 <- 0.1
+nu_02  <- 1
+eta_02 <- 1
 
 N <- 100     # Number of steps
-K <- 100        # number of particles
+K <- 2       # number of particles
 burnin <- 1000  # Number of burn-in steps
 
 
@@ -92,23 +96,14 @@ theta2_star_hist <-matrix(0, N, Tt)
 
 
 # 1) Initial values (t=0)
-theta1_star <- stats::filter(log(y + 0.5), rep(1/5, 5), sides=2)
-theta1_star[is.na(theta1_star)] <- log(y[is.na(theta1_star)] + 0.5)  # bordas
-theta1_star <- as.numeric(theta1_star)
-theta2_star <- c(0, diff(theta1_star))  # diferença primeira como tendência inicial
 
+theta1_star <- numeric(N)
+theta2_star <- numeric(N)
 
 theta_01 <- 0.01
 theta_02 <- 0.01
-
-# Inicializar W1 consistentemente com a trajetória suavizada
-dif2_init <- theta1_star - c(theta_01, theta1_star[-Tt]) -
-  c(theta_02, theta2_star[-Tt])
-W1 <- var(dif2_init)
-
-dif2_init2 <- theta2_star - c(theta_02, theta2_star[-Tt])
-W2 <- var(dif2_init2)
-
+W1 <- 0.01
+W2 <- 0.01
 k_star <- sample(1:K, 1)
 
 #####
@@ -126,7 +121,6 @@ for (n in 1:N) {
   mu_01_bar <- sigma2_01_bar*(mu_01/sigma2_01 + (theta1_star[1]-theta_02)/W1)
   theta_01 <- rnorm(1, mean=mu_01_bar, sd=sqrt(sigma2_01_bar))
 
-
   # 2) Sample W | theta_1, theta_2
   # Sample phi1
   nu_01_bar <- nu_01 + Tt/2
@@ -135,7 +129,6 @@ for (n in 1:N) {
   eta_01_bar <- eta_01 + 0.5 * sum(dif2^2)
   phi1 <- rgamma(1, nu_01_bar, eta_01_bar)
   W1 <- 1/phi1
-
 
   # Sample phi2
   nu_02_bar <- nu_02 + Tt/2
@@ -225,7 +218,7 @@ theta2_mean <- colMeans(theta2_star_hist[-(1:burnin), ])
 
 # Plots ####
 # theta_t1 ####
-t_observed <- c(500, 1000, 1500, 2000)
+t_obs <- c(500, 1000, 1500, 2000)
 x <- 1:Tt
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
 plot(x, theta1_true, type="l", xlab="t", ylab="",
@@ -240,7 +233,6 @@ legend("topright",
 
 
 # theta_t2 ####
-t_observed <- c(100, 200, 500, 7000)
 x <- 1:Tt
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
 plot(x, theta2_mean, type="l", xlab="t", ylab="",
@@ -260,14 +252,14 @@ plot(W2_hist, type="l", xlab="n", ylab="W", main="Traceplot of W2")
 
 # Traceplot for theta1_star_hist #####
 par(mfrow = c(2, 2))
-for (t in t_observed) {
+for (t in t_obs) {
   plot(theta1_star_hist[, t], type="l",
        main=bquote(theta[list(.(t), 1)]), xlab="n", ylab="")
 }
 
 # Traceplot for theta2_star_hist #####
 par(mfrow = c(2, 2))
-for (t in t_observed) {
+for (t in t_obs) {
   plot(theta2_star_hist[, t], type="l",
        main=bquote(theta[list(.(t), 2)]), xlab="n", ylab="")
 }

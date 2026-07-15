@@ -16,14 +16,13 @@ tp <- base::t       # alias to transpose function
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source_file <- "doppler"
+source_file <- "poisson_pol2_200"
 data <- readRDS(paste("../data/", source_file, ".rds", sep = ""))
 y <- data$y
 
 Tt <- length(y)
-#t_observed  <- c(50, 75, 100, 200)
-#t_observed  <- c(250, 500, 750, 2000)
-t_observed <- c(100, 200, 500, 700)
+if (Tt == 200) t_obs <- c(50, 100, 150, 175)
+if (Tt == 2000) t_obs <- c(500, 1000, 1500, 1750)
 
 theta1_present <- TRUE
 theta2_present <- FALSE
@@ -135,7 +134,7 @@ for (n in 1:N) {
 
     if (n %% 100 == 0) {
         time <- proc.time()
-        elapsed_time <- (time - start_time)[[3]]
+        elapsed_time <- (time - start_time)[[1]]
         printf("Iteration %d / %d | Elapsed time: %.0f s", n, N, elapsed_time)
     }
 
@@ -239,7 +238,7 @@ for (n in 1:N) {
 
 }
 
-elapsed_time <- (proc.time() - start_time)[[3]]
+elapsed_time <- (proc.time() - start_time)[[1]]
 printf("Execution time: %.0f s", elapsed_time)
 
 # Results
@@ -353,7 +352,7 @@ plot(
 
 # Traceplots theta1_star ####
 par(mfrow = c(2, 2))
-for (t in t_observed) {
+for (t in t_obs) {
     plot(
         theta1_star_hist[, t],
         type = "l",
@@ -365,7 +364,7 @@ for (t in t_observed) {
 
 # Traceplots theta2_star
 par(mfrow = c(2, 2))
-for (t in t_observed) {
+for (t in t_obs) {
     plot(
         theta2_hist[, t],
         type = "l",

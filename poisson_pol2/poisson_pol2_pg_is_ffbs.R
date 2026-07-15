@@ -18,14 +18,13 @@ set.seed(42)
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source_file <- "blocks"
+source_file <- "poisson_pol2_200"
 data <- readRDS(paste("../data/", source_file, ".rds", sep = ""))
 y <- data$y
 
 Tt <- length(y)
-#t_observed  <- c(50, 75, 100, 200)
-#t_observed  <- c(250, 500, 750, 2000)
-t_observed <- c(250, 500, 750, 1000)
+if (Tt == 200) t_obs <- c(50, 100, 150, 175)
+if (Tt == 2000) t_obs <- c(500, 1000, 1500, 1750)
 
 theta1_present <- TRUE
 theta2_present <- FALSE
@@ -38,8 +37,7 @@ if (theta1_present) {
 if (theta2_present)
     theta2_true <- data$theta2
 
-printf <- function(...)
-    cat(paste(sprintf(...), "\n"))
+printf <- function(...) cat(paste(sprintf(...), "\n"))
 
 logsumexp <- function(x) {
     cc <- max(x)
@@ -52,32 +50,17 @@ log_p_yt <- function(yt, theta_t1) {
     return(res)
 }
 
-# Kalman Filter
-forward_filter_1d_old <- function(z, f, theta2, theta_01, sigma2_01, theta_02, W1) {
-    a <- numeric(Tt); R <- numeric(Tt)
-    m <- numeric(Tt); C <- numeric(Tt)
-    m_t <- theta_01; C_t <- sigma2_01
-    for (t in 1:Tt) {
-        # Prior: incorpora theta_{t-1,2} como drift
-        drift <- if(t==1) theta_02 else theta2[t-1]
-        a_t <- m_t + drift
-        R_t <- C_t + W1
-        # Update com pseudo-observacao
-        Q_t <- R_t + f[t]
-        A_t <- R_t / Q_t
-        m_t <- a_t + A_t * (z[t] - a_t)
-        C_t <- R_t - A_t^2 * Q_t
-        a[t]<-a_t; R[t]<-R_t; m[t]<-m_t; C[t]<-C_t
-    }
-    return(list(a=a, R=R, m=m, C=C))
-}
 
+forward_filter_1d <- function(z, f, theta2, theta_01, theta_02, W1) {
+    a <- numeric(Tt)
+    R <- numeric(Tt)
+    m <- numeric(Tt)
+    C <- numeric(Tt)
 
-forward_filter_1d <- function(z, f, theta2, theta_01, sigma2_01, theta_02, W1) {
-    a <- numeric(Tt); R <- numeric(Tt)
-    m <- numeric(Tt); C <- numeric(Tt)
     drift <- c(theta_02, theta2[-Tt])  # pré-computado, elimina o if
-    m_t <- theta_01; C_t <- sigma2_01
+    m_t <- theta_01;
+    C_t <- 0;
+
     for (t in 1:Tt) {
         a_t <- m_t + drift[t]
         R_t <- C_t + W1
@@ -85,37 +68,40 @@ forward_filter_1d <- function(z, f, theta2, theta_01, sigma2_01, theta_02, W1) {
         A_t <- R_t / Q_t
         m_t <- a_t + A_t * (z[t] - a_t)
         C_t <- R_t * (1 - A_t)
-        a[t] <- a_t; R[t] <- R_t; m[t] <- m_t; C[t] <- C_t
+
+        a[t] <- a_t
+        R[t] <- R_t
+        m[t] <- m_t
+        C[t] <- C_t
     }
-    list(a=a, R=R, m=m, C=C)
+    return(list(a=a, R=R, m=m, C=C))
 }
 
-# Backward Sampling
-ffbs_1d_old <- function(kf, W1) {
-    theta1 <- numeric(Tt)
-    theta1[Tt] <- rnorm(1, kf$m[Tt], sqrt(kf$C[Tt]))
-    for (t in seq(Tt-1, 1)) {
-        B_t  <- kf$C[t] / kf$R[t+1]
-        h_t  <- kf$m[t] + B_t * (theta1[t+1] - kf$a[t+1])
-        H_t  <- kf$C[t] - B_t^2 * kf$R[t+1]
-        theta1[t] <- rnorm(1, h_t, sqrt(H_t))
-    }
-    return(theta1)
-}
 
-ffbs_1d <- function(kf, W1) {
-    theta1 <- numeric(Tt)
-    theta1[Tt] <- rnorm(1, kf$m[Tt], sqrt(kf$C[Tt]))
-    # pré-computar fora do loop
+kalman_smoother_1d <- function(kf, W1) {
+    m_s <- kf$m
     B   <- kf$C[-Tt] / kf$R[-1]
+    for (t in seq(Tt-1, 1)) {
+        m_s[t] <- kf$m[t] + B[t] * (m_s[t+1] - kf$a[t+1])
+    }
+    return(list(m_s=m_s, B=B))
+}
+
+ffbs_1d <- function(kf, ks, W1) {
+    theta1 <- numeric(Tt)
+    theta1[Tt] <- rnorm(1, kf$m[Tt], sqrt(kf$C[Tt]))
+    B <- ks$B
+
+    # pré-computar fora do loop
     H   <- kf$C[-Tt] - B^2 * kf$R[-1]
     sH  <- sqrt(H)
     mC  <- kf$m[-Tt]
     aC1 <- kf$a[-1]
+
     for (t in seq(Tt-1, 1)) {
         theta1[t] <- rnorm(1, mC[t] + B[t]*(theta1[t+1] - aC1[t]), sH[t])
     }
-    theta1
+    return(theta1)
 }
 
 
@@ -123,19 +109,19 @@ ffbs_1d <- function(kf, W1) {
 
 # theta_01 ~ N(mu_01, sigma2_01)
 mu_01 <- log(y[1] + 0.5)
-sigma2_01 <- 10
+sigma2_01 <- 100
 
 # theta_02 ~ N(mu_02, sigma2_02)
 mu_02 <- 0
-sigma2_02 <- 1
+sigma2_02 <- 100
 
 # W1 ~ InvGamma(alpha_W1, beta_W1)
-alpha_W1 <- 1
+alpha_W1 <- 2
 beta_W1 <- 0.01
 
 # W2 ~ InvGamma(alpha_W2, beta_W2)
-alpha_W2 <- 1
-beta_W2 <- 0.001
+alpha_W2 <- 2
+beta_W2 <- 0.0001
 
 N <- 10000
 burnin <- 1000
@@ -153,11 +139,11 @@ theta1_star[is.na(theta1_star)] <- log(y[is.na(theta1_star)] + 0.5)
 theta1_star <- as.numeric(theta1_star)
 
 theta2 <- c(0, diff(theta1_star))
-
 theta_01 <- log(y[1] + 0.5)
+
 theta_02 <- 0
 W1 <- 0.01
-W2 <- 0.001
+W2 <- 0.01
 
 ess_is <- numeric(N)
 itr_irls <- numeric(N) # number of iterations of IRLS (for earch gibbs step)
@@ -176,7 +162,7 @@ for (n in 1:N) {
 
     if (n %% 1000 == 0) {
         time <- proc.time()
-        elapsed_time <- (time - start_time)[[3]]
+        elapsed_time <- (time - start_time)[[1]]
         printf("Iteration %d / %d | Elapsed time: %.0f s | j mean: %.1f", n, N, elapsed_time, mean(itr_irls[1:(n-1)]))
     }
 
@@ -220,8 +206,9 @@ for (n in 1:N) {
             f_t <- exp(-theta1_tilde)       # observational variance
             z_t <- theta1_tilde + f_t*y - 1 # pseudo-observation
 
-            kf  <- forward_filter_1d(z_t, f_t, theta2, theta_01, sigma2_01, theta_02, W1)
-            theta1_tilde <- kf$m   # update the mode
+            kf  <- forward_filter_1d(z_t, f_t, theta2, theta_01, theta_02, W1)
+            ks <- kalman_smoother_1d(kf, W1)
+            theta1_tilde <- ks$m_s   # update the mode
             if (max(abs(theta1_tilde - theta1_tilde_old)) < tol) break
             theta1_tilde_old <- theta1_tilde
     }
@@ -233,7 +220,7 @@ for (n in 1:N) {
         trajectories <- matrix(0, M_is, Tt)
         for (i in 1:M_is) {
             # sample theta1 proposed
-            theta1_prop <- ffbs_1d(kf, W1)
+            theta1_prop <- ffbs_1d(kf, ks, W1=W1)
             trajectories[i, ] <- theta1_prop
 
             # Log-weights: log p(y|theta1) - log g(y|theta1)
@@ -250,7 +237,7 @@ for (n in 1:N) {
         idx <- sample(1:M_is, 1, prob=w)
         theta1_star <- trajectories[idx, ]
     } else {
-        theta1_star <- ffbs_1d(kf, W1)
+        theta1_star <- ffbs_1d(kf, ks, W1)
     }
 
 
@@ -296,7 +283,7 @@ for (n in 1:N) {
 
 }
 
-elapsed_time <- (proc.time() - start_time)[[3]]
+elapsed_time <- (proc.time() - start_time)[[1]]
 printf("Execution time: %.0f s", elapsed_time)
 
 # Results
@@ -404,7 +391,7 @@ plot(
 
 # Traceplots theta1_star ####
 par(mfrow = c(2, 2))
-for (t in t_observed) {
+for (t in t_obs) {
     plot(
         theta1_star_hist[, t],
         type = "l",
@@ -416,7 +403,7 @@ for (t in t_observed) {
 
 # Traceplots theta2_star
 par(mfrow = c(2, 2))
-for (t in t_observed) {
+for (t in t_obs) {
     plot(
         theta2_hist[, t],
         type = "l",

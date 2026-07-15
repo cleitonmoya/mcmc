@@ -42,13 +42,11 @@ data <- readRDS(paste("../data/", source, ".rds", sep=""))
 y <- data$y
 #y <- as.data.frame(Seatbelts)$DriversKilled
 Tt <- length(y) # dimension T
-t_obs <- c(50, 100, 150, 175)
-#t_obs <- c(250, 500, 750, 1000)
-#t_obs <- c(25, 50, 75, 100)
-#t_obs <- c(500, 1000, 1500, 2000)
+if (Tt == 200) t_obs <- c(50, 100, 150, 175)
+if (Tt == 2000) t_obs <- c(500, 1000, 1500, 1750)
+
 theta1_present <- TRUE
 theta2_present <- FALSE
-
 if (theta1_present) {
     theta1_true <- data$theta
     lambda_true <- exp(theta1_true)
@@ -138,7 +136,7 @@ eta_01 <- 0.01
 
 # phi2 = W2^(-1) ~ Gamma(nu_02, eta_02)
 nu_02  <- 2
-eta_02 <- 0.01
+eta_02 <- 0.0001
 
 N <- 10000           # Number of steps
 burnin <- 1000       # Number of burn-in steps
@@ -468,3 +466,18 @@ abline(h=c(-1.96, 1.96), col="red")
 plot(z_theta2, type="l", main=expression("Geweke diagnostic for " * theta[t2]),
      xlab="t", ylab="Z score")
 abline(h=c(-1.96, 1.96), col="red")
+
+
+# ACF for theta1 e theta2
+par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
+for (t in t_obs) {
+    acf(vartheta1_hist[-(1:burnin), t], main=bquote(theta[.(t)*","*1]))
+    acf(vartheta2_hist[-(1:burnin), t], main=bquote(theta[.(t)*","*2]))
+}
+
+# Prior vs posterior for phi2
+curve(dgamma(x, shape=nu_02, rate=eta_02), from=0, to=max(1/W2_hist[-(1:burnin)]),
+      main="phi2 prior vs. posterior", col="red", lwd=2)
+lines(density(1/W2_hist[-(1:burnin)]), col="blue", lwd=2)
+legend("topright", legend=c("Prior","Posterior"), col=c("red","blue"), lwd=2)
+

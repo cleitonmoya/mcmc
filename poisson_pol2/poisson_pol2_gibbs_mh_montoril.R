@@ -135,7 +135,7 @@ eta_01 <- 0.01
 
 # phi2 = W2^(-1) ~ Gamma(nu_02, eta_02)
 nu_02  <- 2
-eta_02 <- 0.01
+eta_02 <- 0.0001
 
 N <- 10000           # Number of steps
 burnin <- 1000       # Number of burn-in steps
@@ -234,7 +234,8 @@ for (n in 1:N) {
     if (n %% 1000 == 0) {
         time <- proc.time()
         elapsed_time <- (time - start_time)[[1]]
-        printf("Iteration %d / %d | Elapsed time: %.0f s", n, N, elapsed_time)
+        printf("Iteration %d / %d | Mean accep. theta1: %.2f | Elapsed time: %.0f s",
+               n, N, mean(ac_hist), elapsed_time)
     }
 
     # Sample theta_01
@@ -521,3 +522,24 @@ for (t in t_obs) {
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
 plot(ac_hist, type="l", xlab="n", ylab="ratio",
      main=expression("Acceptance ratio of " * theta[t*1]))
+
+
+# Prior vs posterior for phi2
+curve(dgamma(x, shape=nu_02, rate=eta_02), from=0, to=max(1/W2_hist[-(1:burnin)]),
+      main="phi2 prior vs. posterior", col="red", lwd=2)
+lines(density(1/W2_hist[-(1:burnin)]), col="blue", lwd=2)
+legend("topright", legend=c("Prior","Posterior"), col=c("red","blue"), lwd=2)
+
+
+# ACF for theta1 e theta2
+par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
+for (t in t_obs) {
+    acf(vartheta1_hist[-(1:burnin), t], main=bquote(theta[.(t)*","*1]))
+    acf(vartheta2_hist[-(1:burnin), t], main=bquote(theta[.(t)*","*2]))
+}
+
+# Prior vs posterior for phi2
+curve(dgamma(x, shape=nu_02, rate=eta_02), from=0, to=max(1/W2_hist[-(1:burnin)]),
+      main="phi2 prior vs. posterior", col="red", lwd=2)
+lines(density(1/W2_hist[-(1:burnin)]), col="blue", lwd=2)
+legend("topright", legend=c("Prior","Posterior"), col=c("red","blue"), lwd=2)+++

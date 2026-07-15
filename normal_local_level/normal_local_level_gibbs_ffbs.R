@@ -96,10 +96,15 @@ ffbs <- function(y, V, W, theta_0) {
 
     # Forward filtering
     # For t=1
+
+    # for theta1 marginalized over theta_0
     #a1 <- m0 #
-    a1 <- theta_0 # # conditioninng in theta_0
-    #R1 <- C0 + W # for theta1 marginalized over theta_0
-    R1 <- W       # conditioninng in theta_0
+    #R1 <- C0 + W
+
+    # conditioning in theta_0
+    a1 <- theta_0
+    R1 <- W
+
     Q1 <- R1 + V
     A1 <- R1 / Q1
     e1 <- y[1] - a1
@@ -120,19 +125,20 @@ ffbs <- function(y, V, W, theta_0) {
         C[t] <- (1 - At) * Rt  # posterior variance
         R[t] <- Rt
         a[t] <- at
-
-        # Backward matrix (for backward sampling)
-        B[t-1] <- C[t-1] / R[t]
     }
+
+    # Backward matrix (for backward sampling)
+    B <- C[-Tt] / R[-1]
 
     # Backward sampling
     # For t=T
     theta[Tt] <- rnorm(1, mean=m[Tt], sd=sqrt(C[Tt]))
 
+    H <- C[-Tt] - B^2 * R[-1]
+    sH  <- sqrt(H)
     for (t in seq(Tt-1,1)) {
         mu <- m[t] + B[t] * (theta[t+1] - a[t+1])
-        sigma2 <- C[t] - B[t]**2 * R[t+1]
-        theta[t] <- rnorm(1, mean=mu, sd=sqrt(sigma2))
+        theta[t] <- rnorm(1, mean=mu, sd=sH[t])
     }
 
     return(theta)
