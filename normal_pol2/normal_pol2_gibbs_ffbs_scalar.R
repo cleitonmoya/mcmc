@@ -68,8 +68,11 @@ rbvn_cond <- function(mu1, mu2, s11, s12, s22) {
 
 # Forward Filtering (Kalman Filter)
 forward_filter <- function(theta_01, theta_02, W1, W2, y, V) {
-    m1 <- theta_01; m2 <- theta_02
-    c11 <- 0; c12 <- 0; c22 <- 0
+    m1 <- theta_01
+    m2 <- theta_02
+    c11 <- 0
+    c12 <- 0
+    c22 <- 0
 
     a1v <- a2v <- R11v <- R12v <- R22v <- m1v <- m2v <- c11v <- c12v <- c22v <- numeric(Tt)
 
@@ -98,32 +101,36 @@ forward_filter <- function(theta_01, theta_02, W1, W2, y, V) {
 # FFBS
 sample_theta_ffbs <- function(theta_01, theta_02, W1, W2, y, V) {
     f <- forward_filter(theta_01, theta_02, W1, W2, y, V)
-    theta1 <- numeric(Tt); theta2 <- numeric(Tt)
+    theta1 <- numeric(Tt)
+    theta2 <- numeric(Tt)
 
+    # Pre-computing B and H for t = 1, ..., Tt-1
+    c11 <- f$c11[-Tt]; c12 <- f$c12[-Tt]; c22 <- f$c22[-Tt]
+    R11p <- f$R11[-1]; R12p <- f$R12[-1]; R22p <- f$R22[-1]
+
+    det <- R11p*R22p - R12p^2
+    B11 <- ((c11+c12)*R22p - c12*R12p) / det
+    B12 <- (-(c11+c12)*R12p + c12*R11p) / det
+    B21 <- ((c12+c22)*R22p - c22*R12p) / det
+    B22 <- (-(c12+c22)*R12p + c22*R11p) / det
+
+    H11 <- c11 - (B11*R11p+B12*R12p)*B11 - (B11*R12p+B12*R22p)*B12
+    H12 <- c12 - (B11*R11p+B12*R12p)*B21 - (B11*R12p+B12*R22p)*B22
+    H22 <- c22 - (B21*R11p+B22*R12p)*B21 - (B21*R12p+B22*R22p)*B22
+
+    m1c <- f$m1[-Tt]; m2c <- f$m2[-Tt]
+    a1p <- f$a1[-1];  a2p <- f$a2[-1]
+
+    # For (t=T)
     draw <- rbvn_cond(f$m1[Tt], f$m2[Tt], f$c11[Tt], f$c12[Tt], f$c22[Tt])
     theta1[Tt] <- draw[1]; theta2[Tt] <- draw[2]
 
     for (t in seq(Tt-1, 1)) {
-        c11<-f$c11[t]; c12<-f$c12[t]; c22<-f$c22[t]
-        R11p<-f$R11[t+1]; R12p<-f$R12[t+1]; R22p<-f$R22[t+1]
-        det <- R11p*R22p - R12p^2
-
-        B11 <- ((c11+c12)*R22p - c12*R12p)/det
-        B12 <- (-(c11+c12)*R12p + c12*R11p)/det
-        B21 <- ((c12+c22)*R22p - c22*R12p)/det
-        B22 <- (-(c12+c22)*R12p + c22*R11p)/det
-
-        d1 <- theta1[t+1] - f$a1[t+1]
-        d2 <- theta2[t+1] - f$a2[t+1]
-
-        h1 <- f$m1[t] + B11*d1 + B12*d2
-        h2 <- f$m2[t] + B21*d1 + B22*d2
-
-        H11 <- c11 - (B11*R11p+B12*R12p)*B11 - (B11*R12p+B12*R22p)*B12
-        H12 <- c12 - (B11*R11p+B12*R12p)*B21 - (B11*R12p+B12*R22p)*B22
-        H22 <- c22 - (B21*R11p+B22*R12p)*B21 - (B21*R12p+B22*R22p)*B22
-
-        draw <- rbvn_cond(h1, h2, H11, H12, H22)
+        d1 <- theta1[t+1] - a1p[t]
+        d2 <- theta2[t+1] - a2p[t]
+        h1 <- m1c[t] + B11[t]*d1 + B12[t]*d2
+        h2 <- m2c[t] + B21[t]*d1 + B22[t]*d2
+        draw <- rbvn_cond(h1, h2, H11[t], H12[t], H22[t])
         theta1[t] <- draw[1]; theta2[t] <- draw[2]
     }
     list(theta1=theta1, theta2=theta2)
@@ -166,7 +173,7 @@ Ff <- matrix(c(1,0))             # dim = 2x1
 G <- rbind(c(1, 1), c(0, 1))    # dim = 2x2
 W <- diag(c(W1, W2), nrow=2, ncol=2)
 
-N <- 20000           # Number of steps
+N <- 10000           # Number of steps
 burnin <- 1000      # Number of burn-in steps
 
 # Auxiliary vectors and matrix to store the results
@@ -199,7 +206,7 @@ for (n in 1:N) {
     theta_02 <- rnorm(1, mean=mu_02_bar, sd=sqrt(sigma2_02_bar))
 
     # Sample theta - FFBS
-    theta <- sample_theta_ffbs(theta_01, theta_02, W1, W2, y, V)
+    theta <- sample_theta_ffbs2(theta_01, theta_02, W1, W2, y, V)
     theta1 <- theta$theta1
     theta2 <- theta$theta2
 
