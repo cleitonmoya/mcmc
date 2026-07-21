@@ -4,8 +4,8 @@
 # Author: Cleiton Moya de Almeida
 
 library(Rfast)
+library(Matrix)
 library(coda)
-
 
 graphics.off()      # close the plots
 rm(list = ls())     # clear the environment
@@ -51,11 +51,10 @@ log_p_yt <- function(yt, theta_t1) {
 }
 
 
-
 # Prior Hyperparameters
 
 # theta_01 ~ N(mu_01, sigma2_01)
-mu_01 <- log(y[1] + 0.5)
+mu_01 <- 0
 sigma2_01 <- 100
 
 # theta_02 ~ N(mu_02, sigma2_02)
@@ -70,15 +69,6 @@ eta_01 <- 0.01
 nu_02 <- 2
 eta_02 <- 0.0001
 
-N <- 10000
-burnin <- 1000
-
-W1_hist <- numeric(N)
-W2_hist <- numeric(N)
-theta_01_hist <- numeric(N)
-theta_02_hist <- numeric(N)
-theta1_hist <- matrix(0, N, Tt)
-theta2_hist <- matrix(0, N, Tt)
 
 # Initial Values
 theta1<- numeric(Tt)
@@ -88,12 +78,114 @@ theta_02 <- 0
 W1 <- 0.01
 W2 <- 0.01
 
-ess_is <- numeric(N)
-itr_irls <- numeric(N) # number of iterations of IRLS (for each gibbs step)
-M_irls_max <- 20       # maximum iterations for IRLS
 
+# Simulation Paramters
+N <- 10000
+burnin <- 1000
+M_irls_max <- 20       # maximum iterations for IRLS
 M_is <- 3
 tol <- 1e-4
+
+
+#####
+# FIXED SPARSE STRUCTURES FOR CHAN METHOD ####
+start_time = proc.time() # execution time
+
+# Base for the prior Precision Matrix K
+sub_diag_base <- rep(-1, Tt-1)
+main_diag_base <- c(rep(2, Tt-1), 1)
+K0 <- bandSparse(n=Tt, k=c(0, -1),
+                 diagonals=list(main_diag_base, sub_diag_base),
+                 symmetric = TRUE)
+
+# diagonal mask
+# @x: slot of the Sparce matrix (S4 object) that contains the non-zero values
+diag_pattern <- bandSparse(n=Tt, k=c(0, -1),
+                           diagonals=list(rep(TRUE, Tt), rep(FALSE, Tt-1)),
+                           symmetric=TRUE)
+idx_diag <- which(diag_pattern@x) # index of subpattern@x which is non-zero
+
+# subdiagonal mask
+sub_pattern <- bandSparse(n=Tt, k=c(0, -1),
+                          diagonals=list(rep(FALSE, Tt), rep(TRUE, Tt-1)),
+                          symmetric=TRUE)
+idx_sub <- which(sub_pattern@x)
+
+# Initial symbolic Cholesky factor
+Ch01_factor <- Cholesky(K0, perm = FALSE, LDL = TRUE)
+Ch02_factor <- Cholesky(K0, perm = FALSE, LDL = TRUE)
+
+# Work precision matrix (static)
+P1_matrix <- K0
+P2_matrix <- K0
+
+
+time1 <- proc.time()
+building_time <- (time1 - start_time)[[1]]
+printf("Sparse structures building: %.4f s", building_time)
+
+#####
+# CHAN METHOD
+
+chan_smoothing_theta1 <- function(y, phi_V, phi1, theta_01, theta_02, theta2) {
+    Tt <- length(y)
+    P1_matrix@x[idx_diag] <- (main_diag_base * phi1) + phi_V
+    P1_matrix@x[idx_sub]  <- -phi1
+    Ch1_factor <- update(Ch01_factor, P1_matrix)
+
+    b <- y * phi_V
+    Hb_theta2 <- numeric(Tt)
+    Hb_theta2[1] <- -theta2[1]
+    Hb_theta2[2:(Tt-1)] <- theta2[1:(Tt-2)] - theta2[2:(Tt-1)]
+    Hb_theta2[Tt] <- theta2[Tt-1]
+    b <- b + phi1*Hb_theta2
+    b[1] <- b[1] + phi1*(theta_01 + theta_02)
+
+    theta1_hat <- as.numeric(Matrix::solve(Ch1_factor, b, system="A"))
+    list(theta1_hat=theta1_hat, ch=Ch1_factor)
+}
+
+chan_sample_theta1 <- function(build_res) {
+    d <- Matrix::diag(build_res$ch)
+    u <- rnorm(Tt)
+    w <- u / sqrt(d)
+    x <- as.vector(Matrix::solve(build_res$ch, w, system="Lt"))
+    build_res$theta1_hat + x
+}
+
+chan_sample_theta2 <- function(theta1, phi1, phi2, theta_02) {
+
+    z <- diff(theta1)   # z_t = theta1[t+1] - theta1[t], t=1,...,T-1
+
+    diag_obs <- c(rep(phi1, Tt-1), 0)
+    P2_matrix@x[idx_diag] <- (main_diag_base*phi2) + diag_obs
+    P2_matrix@x[idx_sub]  <- -phi2
+
+    Ch2_factor <- update(Ch02_factor, P2_matrix)
+
+    b <- numeric(Tt)
+    b[1:(Tt-1)] <- z * phi1
+    b[1] <- b[1] + theta_02 * phi2
+
+    theta2_hat <- as.numeric(Matrix::solve(Ch2_factor, b, system="A"))
+    d <- Matrix::diag(Ch2_factor)
+    u <- rnorm(Tt)
+    w <- u/sqrt(d)
+    x <- as.vector(Matrix::solve(Ch2_factor, w, system="Lt"))
+
+    return(theta2_hat + x)
+}
+
+
+# Auxiliry varables
+W1_hist <- numeric(N)
+W2_hist <- numeric(N)
+theta_01_hist <- numeric(N)
+theta_02_hist <- numeric(N)
+theta1_hist <- matrix(0, N, Tt)
+theta2_hist <- matrix(0, N, Tt)
+ess_is <- numeric(N)
+itr_irls <- numeric(N) # number of iterations of IRLS (for each gibbs step)
 theta1_tilde <- numeric(Tt)
 Weights <- matrix(0, N, M_is)
 
@@ -122,7 +214,7 @@ for (n in 1:N) {
     theta_02 <- rnorm(1, mean = mu_02_bar, sd = sqrt(sigma2_02_bar))
 
 
-    # Sample W1 (conjugated invgamma)
+    # Sample phi1 (conjugated gamma)
     dif1   <- theta1- c(theta_01, theta1[-Tt])
     diffs1 <- dif1 - c(theta_02, theta2[-Tt])
     nu_01_bar <- nu_01 + Tt / 2
@@ -130,15 +222,13 @@ for (n in 1:N) {
     phi1 <- rgamma(1, shape = nu_01_bar, rate = eta_01_bar)
     W1 <- 1/phi1
 
-    # Sample W2 (conjugated invgamma)
+    # Sample phi2 (conjugated gamma)
     diffs2 <- theta2 - c(theta_02, theta2[-Tt])
     nu_02_bar <- nu_02 + Tt / 2
     eta_02_bar  <- eta_02 + 0.5 * sum(diffs2^2)
     phi2 <- rgamma(1, shape = nu_02_bar, rate = eta_02_bar)
     W2 <- 1/phi2
 
-    sd_W1 <- sqrt(W1)
-    sd_W2 <- sqrt(W2)
 
     #
     # Importance Sampling for  theta_t1
@@ -148,12 +238,12 @@ for (n in 1:N) {
     theta1_tilde_old <- theta1_tilde
     for (j in 1:M_irls_max) {
 
-            f_t <- exp(-theta1_tilde)       # observational variance
-            z_t <- theta1_tilde + f_t*y - 1 # pseudo-observation
-            drift <- c(theta_02, theta2[-Tt])  # pré-computado, elimina o if
-            kf <- forward_filter(z_t, theta_01, 0, f_t, W1, drift=drift)
-            ks <- kalman_smoother(kf)
-            theta1_tilde <- ks$m_s   # update the mode
+            f_t <- exp(-theta1_tilde)         # observational variance
+            z_t <- theta1_tilde + f_t*y - 1   # pseudo-observation
+
+            res <- chan_smoothing_theta1(z_t, 1/f_t, phi1, theta_01, theta_02, theta2)
+            theta1_tilde <- res$theta1_hat
+
             if (max(abs(theta1_tilde - theta1_tilde_old)) < tol) break
             theta1_tilde_old <- theta1_tilde
     }
@@ -165,7 +255,7 @@ for (n in 1:N) {
         trajectories <- matrix(0, M_is, Tt)
         for (i in 1:M_is) {
             # sample theta1 proposed
-            theta1_prop <- ffbs(kf, ks)
+            theta1_prop  <- chan_sample_theta1(res)
             trajectories[i, ] <- theta1_prop
 
             # Log-weights: log p(y|theta1) - log g(y|theta1)
@@ -180,19 +270,15 @@ for (n in 1:N) {
         ess_is[n] <- 1 / sum(exp(2*log_w))
 
         idx <- sample(1:M_is, 1, prob=w)   # index for theta1*
-        theta1<- trajectories[idx, ] # theta1
+        theta1 <- trajectories[idx, ] # theta1
     } else {
-        theta1<- ffbs(kf, ks)
+        theta1  <- chan_sample_theta1(res)
     }
 
     #
-    # FFBS for  theta_t2 | theta1, W1, W2
+    # Chan for  theta_t2 | theta1, W1, W2
     #
-    z <- diff(theta1) # pseudo-observation
-    kf2 <- forward_filter(z, theta_02, 0, W1, W2)
-    ks2 <- kalman_smoother(kf2)
-    theta2[1:(Tt-1)] <- ffbs(kf2, ks2)
-    theta2[Tt] <- rnorm(1, theta2[Tt-1], sqrt(W2))
+    theta2 <- chan_sample_theta2(theta1, phi1, phi2, theta_02)
 
     # Store the results
     theta_01_hist[n] <- theta_01

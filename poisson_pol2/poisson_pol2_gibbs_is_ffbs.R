@@ -18,7 +18,7 @@ set.seed(42)
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source_file <- "poisson_pol2_2000"
+source_file <- "poisson_pol2_200"
 data <- readRDS(paste("../data/", source_file, ".rds", sep = ""))
 y <- data$y
 
@@ -113,7 +113,7 @@ ffbs <- function(kf, ks) {
 # Prior Hyperparameters
 
 # theta_01 ~ N(mu_01, sigma2_01)
-mu_01 <- log(y[1] + 0.5)
+mu_01 <- 0
 sigma2_01 <- 100
 
 # theta_02 ~ N(mu_02, sigma2_02)
@@ -122,21 +122,12 @@ sigma2_02 <- 100
 
 # 1/W1 ~ Gamma(nu_01, eta_01)
 nu_01 <- 2
-eta_01 <- 0.001
+eta_01 <- 0.01
 
 # 1/W2 ~ Gamma(nu_02, eta_02)
 nu_02 <- 2
 eta_02 <- 0.001
 
-N <- 10000
-burnin <- 1000
-
-W1_hist <- numeric(N)
-W2_hist <- numeric(N)
-theta_01_hist <- numeric(N)
-theta_02_hist <- numeric(N)
-theta1_hist <- matrix(0, N, Tt)
-theta2_hist <- matrix(0, N, Tt)
 
 # Initial Values
 theta1<- numeric(Tt)
@@ -146,15 +137,26 @@ theta_02 <- 0
 W1 <- 0.01
 W2 <- 0.01
 
-ess_is <- numeric(N)
-itr_irls <- numeric(N) # number of iterations of IRLS (for each gibbs step)
-M_irls_max <- 20       # maximum iterations for IRLS
 
+# Simulation parameters
+N <- 10000
+burnin <- 1000
 M_is <- 3
 tol <- 1e-4
+M_irls_max <- 20       # maximum iterations for IRLS
+
+
+# Auxiliary variables
+W1_hist <- numeric(N)
+W2_hist <- numeric(N)
+theta_01_hist <- numeric(N)
+theta_02_hist <- numeric(N)
+theta1_hist <- matrix(0, N, Tt)
+theta2_hist <- matrix(0, N, Tt)
+ess_is <- numeric(N)
+itr_irls <- numeric(N) # number of iterations of IRLS (for each gibbs step)
 theta1_tilde <- numeric(Tt)
 Weights <- matrix(0, N, M_is)
-
 
 #####
 start_time <- proc.time()

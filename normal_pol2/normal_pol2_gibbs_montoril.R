@@ -146,9 +146,6 @@ chan_sample_theta1 <- function(y, phi_V, phi1, theta_01, theta_02, theta2) {
     P1_matrix@x[idx_diag] <- (main_diag_base * phi1) + phi_V
     P1_matrix@x[idx_sub] <- -phi1
 
-    # DEBUG: checar antes de atualizar
-    diag_vals <- P1_matrix@x[idx_diag]
-
     # Update the Cholesky factor
     Ch1_factor <- update(Ch01_factor, P1_matrix)
 
