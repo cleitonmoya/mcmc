@@ -119,7 +119,6 @@ Ch02_factor <- Cholesky(K0, perm = FALSE, LDL = TRUE)
 P1_matrix <- K0
 P2_matrix <- K0
 
-
 time1 <- proc.time()
 building_time <- (time1 - start_time)[[1]]
 printf("Sparse structures building: %.4f s", building_time)
@@ -177,7 +176,7 @@ chan_sample_theta2 <- function(theta1, phi1, phi2, theta_02) {
 }
 
 
-# Auxiliry varables
+# Auxiliary varables
 W1_hist <- numeric(N)
 W2_hist <- numeric(N)
 theta_01_hist <- numeric(N)
@@ -191,6 +190,7 @@ Weights <- matrix(0, N, M_is)
 
 
 #####
+# Gibbs sampling
 start_time <- proc.time()
 for (n in 1:N) {
 
@@ -213,19 +213,18 @@ for (n in 1:N) {
                                       mu_02 / sigma2_02)
     theta_02 <- rnorm(1, mean = mu_02_bar, sd = sqrt(sigma2_02_bar))
 
-
     # Sample phi1 (conjugated gamma)
-    dif1   <- theta1- c(theta_01, theta1[-Tt])
+    dif1 <- theta1- c(theta_01, theta1[-Tt])
     diffs1 <- dif1 - c(theta_02, theta2[-Tt])
     nu_01_bar <- nu_01 + Tt / 2
-    eta_01_bar  <- eta_01 + 0.5 * sum(diffs1^2)
+    eta_01_bar <- eta_01 + 0.5 * sum(diffs1^2)
     phi1 <- rgamma(1, shape = nu_01_bar, rate = eta_01_bar)
     W1 <- 1/phi1
 
     # Sample phi2 (conjugated gamma)
     diffs2 <- theta2 - c(theta_02, theta2[-Tt])
     nu_02_bar <- nu_02 + Tt / 2
-    eta_02_bar  <- eta_02 + 0.5 * sum(diffs2^2)
+    eta_02_bar <- eta_02 + 0.5 * sum(diffs2^2)
     phi2 <- rgamma(1, shape = nu_02_bar, rate = eta_02_bar)
     W2 <- 1/phi2
 
@@ -276,7 +275,7 @@ for (n in 1:N) {
     }
 
     #
-    # Chan for  theta_t2 | theta1, W1, W2
+    # Chan sampling for theta_t2 | theta1, W1, W2
     #
     theta2 <- chan_sample_theta2(theta1, phi1, phi2, theta_02)
 
@@ -294,24 +293,29 @@ for (n in 1:N) {
 # Simulation summary ####
 # Execution time
 end_time <- proc.time()
+sampling_time <- (end_time - time1)[[1]]
 elapsed_time <- (end_time - start_time)[[1]]
-printf("Total elapsed CPU time: %.0f s", elapsed_time)
+printf("Sampling: %.2f s", sampling_time)
+printf("Total CPU time: %.0f s", elapsed_time)
 
 
 # Posterior mean
 theta1_mean <- colMeans(theta1_hist[-(1:burnin), ])
 theta2_mean <- colMeans(theta2_hist[-(1:burnin), ])
-theta2_median <- colMedians(theta2_hist[-(1:burnin), ])
 lambda_mean <- exp(theta1_mean)
-printf("W1 mean: %.3f", mean(W1_hist[-(1:burnin)]))
+
+printf("W1 mean: %.5f", mean(W1_hist[-(1:burnin)]))
+printf("W1 median: %.5f", median(W1_hist[-(1:burnin)]))
 printf("W2 mean: %.5f", mean(W2_hist[-(1:burnin)]))
 printf("W2 median: %.5f", median(W2_hist[-(1:burnin)]))
+
 
 # Log-likelihood
 loglik <- sum(dpois(y, lambda_mean, log=TRUE))
 printf("Log-likelihood: %.2f", loglik)
 
-# Effective sample size ####
+
+# Effective sample size
 printf("Effective Sample Size:")
 ess_w1 <- effectiveSize(mcmc(W1_hist[-(1:burnin)]))
 ess_w2 <- effectiveSize(mcmc(W2_hist[-(1:burnin)]))
@@ -320,32 +324,18 @@ printf("\tW2: %.0f", ess_w2)
 
 ess_theta1 <- effectiveSize(mcmc(theta1_hist[-(1:burnin),]))
 ess_theta2 <- effectiveSize(mcmc(theta2_hist[-(1:burnin),]))
-par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
-plot(ess_theta1, type="l", main=expression("Effective sample of " * theta[t1]), xlab="t")
-plot(ess_theta2, type="l", main=expression("Effective sample of " * theta[t2]), xlab="t")
+printf("\ttheta1 (mean): %.2f", mean(ess_theta1))
+printf("\ttheta2 (mean): %.2f", mean(ess_theta2))
 
-par(mfrow = c(1, 2), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
-hist(ess_theta1)
-hist(ess_theta2)
-printf("\ttheta1 (mean): %.0f", mean(ess_theta1))
-printf("\ttheta2 (mean): %.0f", mean(ess_theta2))
-
-# Effective sample size per second ####
+# Effective sample size per second
 printf("Effective Sample Size / second:")
 printf("\tW1: %.2f", ess_w1/elapsed_time)
 printf("\tW2: %.2f", ess_w2/elapsed_time)
 
 ess_sec_theta1 <- ess_theta1/elapsed_time
 ess_sec_theta2 <- ess_theta2/elapsed_time
-par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
-plot(ess_sec_theta1, type="l", main=expression("Effective sample size per second of " * theta[t1]), xlab="t")
-plot(ess_sec_theta2, type="l", main=expression("Effective sample size per second of " * theta[t2]), xlab="t")
-
-par(mfrow = c(1, 2), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
-hist(ess_sec_theta1)
-hist(ess_sec_theta2)
-printf("\ttheta1 (mean): %.0f", mean(ess_sec_theta1))
-printf("\ttheta2 (mean): %.0f", mean(ess_sec_theta2))
+printf("\ttheta1 (mean): %.2f", mean(ess_sec_theta1))
+printf("\ttheta2 (mean): %.2f", mean(ess_sec_theta2))
 
 
 # Geweke diagnostic: Z test for two mean difference
@@ -355,24 +345,14 @@ z_w1 <- unname(geweke.diag(W1_hist[-(1:burnin)], frac1=0.1, frac2=0.5)[[1]])
 z_w2 <- unname(geweke.diag(W2_hist[-(1:burnin)], frac1=0.1, frac2=0.5)[[1]])
 printf("\tz_w1: %.2f", z_w1)
 printf("\tz_w2: %.2f", z_w2)
-z_theta1 <- unname(geweke.diag(theta1_hist[-(1:burnin),], frac1=0.1, frac2=0.5)[[1]])
-z_theta2 <- unname(geweke.diag(theta2_hist[-(1:burnin),], frac1=0.1, frac2=0.5)[[1]])
-
 
 # Percent of instants in the H_0 rejection region:
+z_theta1 <- unname(geweke.diag(theta1_hist[-(1:burnin),], frac1=0.1, frac2=0.5)[[1]])
+z_theta2 <- unname(geweke.diag(theta2_hist[-(1:burnin),], frac1=0.1, frac2=0.5)[[1]])
 z1_out <- sum((z_theta1 < -1.96) | (z_theta1 > 1.96))/Tt
 z2_out <- sum((z_theta2 < -1.96) | (z_theta2 > 1.96))/Tt
 printf("\tPercent of theta1 out: %.3f", z1_out)
 printf("\tPercent of theta2 out: %.3f", z2_out)
-
-par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
-plot(z_theta1, type="l", main=expression("Geweke diagnostic for " * theta[t1]),
-     xlab="t", ylab="Z score")
-abline(h=c(-1.96, 1.96), col="red")
-
-plot(z_theta2, type="l", main=expression("Geweke diagnostic for " * theta[t2]),
-     xlab="t", ylab="Z score")
-abline(h=c(-1.96, 1.96), col="red")
 
 
 #####
@@ -402,6 +382,7 @@ if (theta1_present) {
            pch = c(20, NA),
            bty = "n")
 }
+
 
 # y, theta1_true, theta1_mean ####
 x <- 1:Tt
@@ -478,13 +459,16 @@ lines(density(W2_hist[-(1:burnin)]), col = "blue", lwd = 2)
 # Traceplot for W1 and W2 ####
 par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex = 0.8)
 plot(W1_hist[-(1:burnin)], type="l", xlab="n", ylab="W", main="Traceplot of W1")
+abline(v=burnin, col="red")
 plot(W2_hist[-(1:burnin)], type="l", xlab="n", ylab="W", main="Traceplot of W2")
+abline(v=burnin, col="red")
 
 
 # Traceplots for theta_t1 ####
 par(mfrow = c(2, 2))
 for (t in t_obs) {
     plot(theta1_hist[, t], type="l", main=bquote(theta[.(t)*","*1]), xlab="", ylab="")
+    abline(v=burnin, col="red")
 }
 
 
@@ -492,7 +476,29 @@ for (t in t_obs) {
 par(mfrow = c(2, 2))
 for (t in t_obs) {
     plot(theta2_hist[, t], type="l", main=bquote(theta[.(t)*","*2]), xlab="", ylab="")
+    abline(v=burnin, col="red")
 }
+
+
+# Effective sample size ####
+par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
+plot(ess_theta1, type="l", main=expression("Effective sample of " * theta[t1]), xlab="t")
+plot(ess_theta2, type="l", main=expression("Effective sample of " * theta[t2]), xlab="t")
+
+par(mfrow = c(1, 2), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
+hist(ess_theta1)
+hist(ess_theta2)
+
+
+# Geweke diagnostic ####
+par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
+plot(z_theta1, type="l", main=expression("Geweke diagnostic for " * theta[t1]),
+     xlab="t", ylab="Z score")
+abline(h=c(-1.96, 1.96), col="red")
+
+plot(z_theta2, type="l", main=expression("Geweke diagnostic for " * theta[t2]),
+     xlab="t", ylab="Z score")
+abline(h=c(-1.96, 1.96), col="red")
 
 
 # ACF for theta1 e theta2
@@ -502,15 +508,15 @@ for (t in t_obs) {
     acf(theta2_hist[-(1:burnin), t], main=bquote(theta[.(t)*","*2]))
 }
 
+
 # Prior vs posterior for phi2
-par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
 curve(dgamma(x, shape=nu_02, rate=eta_02), from=0, to=max(1/W2_hist[-(1:burnin)]),
       main="phi2 prior vs. posterior", col="red", lwd=2)
-lines(density(W2_hist[-(1:burnin)]), col="blue", lwd=2)
+lines(density(1/W2_hist[-(1:burnin)]), col="blue", lwd=2)
 legend("topright", legend=c("Prior","Posterior"), col=c("red","blue"), lwd=2)
 
 
-# Weights
-par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
-i_<- min(M_is, 3)
-matplot(Weights[,1:i_], type="l")
+# Effective Sample Size (IS)
+par(mfrow=c(1,1), mar=c(4,4,2,2), cex=0.8)
+plot(ess_is, type="l", main="Effective Sample Size - IS")
