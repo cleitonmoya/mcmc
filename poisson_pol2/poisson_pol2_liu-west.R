@@ -44,7 +44,7 @@ library(mvtnorm)      # rmvnorm() for the parameter kernel
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data (same dataset as poisson_pol2_gibbs_mh_cw.R)
-source <- "poisson_pol2_2000"
+source <- "poisson_pol2_200"
 data <- readRDS(paste("../data/", source, ".rds", sep=""))
 y <- data$y
 Tt <- length(y)

@@ -4,6 +4,7 @@
 #    Particle Markov Chain Monte Carlo Methods. Journal of the Royal
 #    Statistical Society Series B: Statistical Methodology, 72(3), 269–342.
 #    https://doi.org/10.1111/j.1467-9868.2009.00736.x
+# TENTATIVA DE ESTABILIZAÇÃO - AINDA NÃO FUNCIONANDO
 # Author: Cleiton Moya de Almeida
 
 

@@ -79,7 +79,7 @@ W1 <- 0.01
 W2 <- 0.01
 
 
-# Simulation Paramters
+# Simulation Parameters
 N <- 10000
 burnin <- 1000
 M_irls_max <- 20       # maximum iterations for IRLS
@@ -289,6 +289,8 @@ for (n in 1:N) {
     theta2_hist[n, ] <- theta2
 
 }
+
+
 # Simulation summary ####
 # Execution time
 end_time <- proc.time()
@@ -371,6 +373,7 @@ abline(h=c(-1.96, 1.96), col="red")
 plot(z_theta2, type="l", main=expression("Geweke diagnostic for " * theta[t2]),
      xlab="t", ylab="Z score")
 abline(h=c(-1.96, 1.96), col="red")
+
 
 #####
 # Plots

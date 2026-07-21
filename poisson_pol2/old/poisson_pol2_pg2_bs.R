@@ -4,6 +4,10 @@
 #    Particle Markov Chain Monte Carlo Methods. Journal of the Royal
 #    Statistical Society Series B: Statistical Methodology, 72(3), 269-342.
 #    https://doi.org/10.1111/j.1467-9868.2009.00736.x
+#
+# trajetória theta_star reocnstruída via backward sampling
+#
+#
 # Author: Cleiton Moya de Almeida
 
 library(invgamma)
