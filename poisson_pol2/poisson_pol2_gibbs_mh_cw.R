@@ -138,10 +138,21 @@ eta_01 <- 0.01
 nu_02  <- 2
 eta_02 <- 0.0001
 
+# Initialization
+W2 <- 0.01
+W1 <- 0.01
+phi1 <- 1/W1
+phi2 <- 1/W2
+theta_01 <- 0
+theta_02 <- 0
+vartheta1 <- numeric(Tt)
+vartheta2 <- numeric(Tt)
+
 N <- 10000           # Number of steps
 burnin <- 1000       # Number of burn-in steps
 #varsigma2 <- 0.03   # Random walkikng variance hyperparameter - Doppler
-varsigma2 <- 0.05    # Random walkikng variance hyperparameter - Poisson_pol2_200
+if (Tt == 200) varsigma2 <- 0.05    # Random walkikng variance hyperparameter - Poisson_pol2_200
+if (Tt == 2000) varsigma2 <- 0.01    # Random walkikng variance hyperparameter - Poisson_pol2_200
 
 # Auxiliary vectors and matrix to store the results
 vartheta1_hist <- matrix(nrow=N, ncol=Tt)
@@ -154,18 +165,6 @@ ac_hist <- numeric(N)
 
 #####
 # Gibbs sampling
-
-# Initialization
-W2 <- 0.01
-W1 <- 0.01
-phi1 <- 1/W1
-phi2 <- 1/W2
-theta_01 <- 0.01
-theta_02 <- 0.01
-vartheta1_init <- log(y + 0.5)
-vartheta2_init <- diff(c(theta_01, vartheta1_init))
-vartheta1 <- as.matrix(vartheta1_init)
-vartheta2 <- as.matrix(vartheta2_init)
 
  # Main loop
 start_time = proc.time() # execution time
@@ -476,6 +475,7 @@ for (t in t_obs) {
 }
 
 # Prior vs posterior for phi2
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
 curve(dgamma(x, shape=nu_02, rate=eta_02), from=0, to=max(1/W2_hist[-(1:burnin)]),
       main="phi2 prior vs. posterior", col="red", lwd=2)
 lines(density(1/W2_hist[-(1:burnin)]), col="blue", lwd=2)

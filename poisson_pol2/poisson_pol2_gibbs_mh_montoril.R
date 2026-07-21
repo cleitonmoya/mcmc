@@ -33,7 +33,7 @@ set.seed(42)
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source <- "poisson_pol2_200"
+source <- "poisson_pol2_2000"
 data <- readRDS(paste("../data/", source, ".rds", sep=""))
 y <- data$y
 #y <- as.data.frame(Seatbelts)$DriversKilled
@@ -137,11 +137,22 @@ eta_01 <- 0.01
 nu_02  <- 2
 eta_02 <- 0.0001
 
+# Initialization
+W2 <- 0.01
+W1 <- 0.01
+phi1 <- 1/W1
+phi2 <- 1/W2
+theta_01 <- 0
+theta_02 <- 0
+vartheta1 <- numeric(Tt)
+vartheta2 <- numeric(Tt)
+
+
 N <- 10000           # Number of steps
 burnin <- 1000       # Number of burn-in steps
 #varsigma2 <- 0.03   # Random walkikng variance hyperparameter - Doppler
-varsigma2 <- 0.05    # Random walkikng variance hyperparameter - Poisson_pol2_200
-
+if (Tt == 200) varsigma2 <- 0.05    # Random walkikng variance hyperparameter - Poisson_pol2_200
+if (Tt == 2000) varsigma2 <- 0.01    # Random walkikng variance hyperparameter - Poisson_pol2_200
 
 #####
 # FIXED SPARSE STRUCTURES FOR CHAN METHOD ####
@@ -215,20 +226,6 @@ ac_hist <- numeric(N)
 #####
 # Gibbs sampling
 
-# Initialization
-W2 <- 0.01
-W1 <- 0.01
-phi1 <- 1/W1
-phi2 <- 1/W2
-theta_01 <- 0.01
-theta_02 <- 0.01
-#vartheta1_init <- log(y + 0.5)
-#vartheta2_init <- diff(c(theta_01, vartheta1_init))
-#vartheta1 <- as.matrix(vartheta1_init)
-#vartheta2 <- as.matrix(vartheta2_init)
-vartheta1 <- numeric(Tt)
-vartheta2 <- numeric(Tt)
-
  # Main loop
 start_time = proc.time() # execution time
 for (n in 1:N) {
@@ -237,7 +234,7 @@ for (n in 1:N) {
         time <- proc.time()
         elapsed_time <- (time - start_time)[[1]]
         printf("Iteration %d / %d | Accep. theta1: %.2f | Elapsed time: %.0f s",
-               n, N, ac_hist, elapsed_time)
+               n, N, ac_hist[n-1], elapsed_time)
     }
 
     # Sample theta_01

@@ -1,6 +1,6 @@
 # Poisson - 2nd Order Polynomial Dynamic Model
 #
-# Strategy: IS for theta_t1, theta_t2 sampled via FFBS
+# Strategy: IS for theta_t1, theta_t2 sampled via Chan
 # Author: Cleiton Moya de Almeida
 
 library(Rfast)
@@ -18,7 +18,7 @@ set.seed(42)
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source_file <- "poisson_pol2_2000"
+source_file <- "poisson_pol2_200"
 data <- readRDS(paste("../data/", source_file, ".rds", sep = ""))
 y <- data$y
 
@@ -50,64 +50,6 @@ log_p_yt <- function(yt, theta_t1) {
     return(res)
 }
 
-forward_filter <- function(y, m0, C0, V, W, drift=NULL) {
-    Tt <- length(y)
-
-    if (is.null(drift)) drift <- rep(0, Tt)
-    if (length(V) == 1) V <- rep(V, Tt)
-
-    a <- numeric(Tt)
-    R <- numeric(Tt)
-    m <- numeric(Tt)
-    C <- numeric(Tt)
-
-    mt <- m0
-    Ct <- C0
-
-    for (t in 1:Tt) {
-        at <- mt + drift[t]
-        Rt <- Ct + W
-
-        Qt <- Rt + V[t]
-        At <- Rt / Qt
-
-        mt <- at + At*(y[t] - at)
-        Ct <- Rt*(1 - At)
-
-        a[t] <- at
-        R[t] <- Rt
-        m[t] <- mt
-        C[t] <- Ct
-    }
-    return(list(a=a, R=R, m=m, C=C))
-}
-
-kalman_smoother <- function(kf) {
-    Tt <- length(kf$m)
-    m_s <- kf$m
-    B   <- kf$C[-Tt] / kf$R[-1]
-    for (t in seq(Tt-1, 1)) {
-        m_s[t] <- kf$m[t] + B[t] * (m_s[t+1] - kf$a[t+1])
-    }
-    return(list(m_s=m_s, B=B))
-}
-
-ffbs <- function(kf, ks) {
-    Tt <- length(kf$m)
-    theta <- numeric(Tt)
-    theta[Tt] <- rnorm(1, kf$m[Tt], sqrt(kf$C[Tt]))
-    B <- ks$B
-
-    H   <- kf$C[-Tt] - B^2 * kf$R[-1]
-    sH  <- sqrt(H)
-    mC  <- kf$m[-Tt]
-    aC1 <- kf$a[-1]
-
-    for (t in seq(Tt-1, 1)) {
-        theta[t] <- rnorm(1, mC[t] + B[t]*(theta[t+1] - aC1[t]), sH[t])
-    }
-    return(theta)
-}
 
 
 # Prior Hyperparameters
@@ -120,13 +62,13 @@ sigma2_01 <- 100
 mu_02 <- 0
 sigma2_02 <- 100
 
-# 1/W1 ~ Gamma(nu_01, eta_01)
+# W1 ~ InvGamma(nu_01, eta_01)
 nu_01 <- 2
-eta_01 <- 0.001
+eta_01 <- 0.01
 
-# 1/W2 ~ Gamma(nu_02, eta_02)
+# W2 ~ InvGamma(nu_02, eta_02)
 nu_02 <- 2
-eta_02 <- 0.001
+eta_02 <- 0.0001
 
 N <- 10000
 burnin <- 1000
@@ -471,15 +413,15 @@ for (t in t_obs) {
     acf(theta2_hist[-(1:burnin), t], main=bquote(theta[.(t)*","*2]))
 }
 
-# Prior vs posterior for phi2 ####
-par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
+# Prior vs posterior for phi2
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
 curve(dgamma(x, shape=nu_02, rate=eta_02), from=0, to=max(1/W2_hist[-(1:burnin)]),
       main="phi2 prior vs. posterior", col="red", lwd=2)
-lines(density(1/W2_hist[-(1:burnin)]), col="blue", lwd=2)
+lines(density(W2_hist[-(1:burnin)]), col="blue", lwd=2)
 legend("topright", legend=c("Prior","Posterior"), col=c("red","blue"), lwd=2)
 
 
-# Weights ####
+# Weights
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
 i_<- min(M_is, 3)
 matplot(Weights[,1:i_], type="l")

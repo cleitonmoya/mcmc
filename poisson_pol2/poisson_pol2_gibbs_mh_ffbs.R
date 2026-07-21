@@ -140,9 +140,11 @@ ffbs <- function(y, m0, C0, V, W) {
         Qt <- Rt + V              # forecast variance
         At <- Rt / Qt             # adaptive coefficient
 
-        m[t] <- at + At*(y[t] - at) # posterior mean
-        C[t] <- Rt*(1 - At)         # posterior variance
+        mt <- at + At*(y[t] - at) # posterior mean
+        Ct <- Rt*(1 - At)         # posterior variance
 
+        m[t] <- mt
+        C[t] <- Ct11111111111
         a[t] <- at
         R[t] <- Rt
     }
@@ -170,11 +172,11 @@ ffbs <- function(y, m0, C0, V, W) {
 # Prior hyperparameters
 # theta_01 ~ N(mu_01, sigma2_01)
 mu_01     <- 0
-sigma2_01 <- 10
+sigma2_01 <- 100
 
 # theta_02 ~ N(mu_2, sigma2_02)
 mu_02     <- 0
-sigma2_02 <- 10
+sigma2_02 <- 100
 
 # phi1 = W1^(-1) ~ Gamma(nu_01, eta_01)
 nu_01  <- 2
@@ -187,7 +189,18 @@ eta_02 <- 0.0001
 N <- 10000           # Number of steps
 burnin <- 1000       # Number of burn-in steps
 #varsigma2 <- 0.03   # Random walkikng variance hyperparameter - Doppler
-varsigma2 <- 0.05    # Random walkikng variance hyperparameter - Poisson_pol2_200
+if (Tt == 200) varsigma2 <- 0.05    # Random walkikng variance hyperparameter - Poisson_pol2_200
+if (Tt == 2000) varsigma2 <- 0.01    # Random walkikng variance hyperparameter - Poisson_pol2_200
+
+# Initialization
+W2 <- 0.01
+W1 <- 0.01
+phi1 <- 1/W1
+phi2 <- 1/W2
+theta_01 <- 0
+theta_02 <- 0
+vartheta1 <- numeric(Tt)
+vartheta2 <- numeric(Tt)
 
 # Auxiliary vectors and matrix to store the results
 vartheta1_hist <- matrix(nrow=N, ncol=Tt)
@@ -201,18 +214,6 @@ ac_hist <- numeric(N)
 #####
 # Gibbs sampling
 
-# Initialization
-W2 <- 0.01
-W1 <- 0.01
-phi1 <- 1/W1
-phi2 <- 1/W2
-theta_01 <- 0.01
-theta_02 <- 0.01
-vartheta1_init <- log(y + 0.5)
-vartheta2_init <- diff(c(theta_01, vartheta1_init))
-vartheta1 <- as.matrix(vartheta1_init)
-vartheta2 <- as.matrix(vartheta2_init)
-
  # Main loop
 start_time = proc.time() # execution time
 for (n in 1:N) {
@@ -220,8 +221,10 @@ for (n in 1:N) {
     if (n %% 1000 == 0) {
         time <- proc.time()
         elapsed_time <- (time - start_time)[[1]]
-        printf("Iteration %d / %d | Elapsed CPU time: %.0f s", n, N, elapsed_time)
+        printf("Iteration %d / %d | Accep. theta1: %.2f | Elapsed time: %.0f s",
+               n, N, ac_hist[n-1], elapsed_time)
     }
+
 
     # Sample theta_01
     sigma2_01_bar <- (1/sigma2_01 + 1/W1)^(-1)
