@@ -1,6 +1,10 @@
 # Poisson - 2nd Order Polynomial Dynamic Model
 #
-# Strategy: IS for theta_t1, theta_t2 sampled via Chan
+# Strategy:
+#  - theta1: Importance Sampling
+#      Importance density: bootstrap
+#  - theta2: Precision sampling (Chan)
+#
 # Author: Cleiton Moya de Almeida
 
 library(Rfast)
@@ -82,9 +86,8 @@ W2 <- 0.01
 # Simulation Parameters
 N <- 10000
 burnin <- 1000
-M_irls_max <- 20       # maximum iterations for IRLS
-M_is <- 3
-tol <- 1e-4
+M_is <- 100
+
 
 
 #####
@@ -112,11 +115,9 @@ sub_pattern <- bandSparse(n=Tt, k=c(0, -1),
 idx_sub <- which(sub_pattern@x)
 
 # Initial symbolic Cholesky factor
-Ch01_factor <- Cholesky(K0, perm = FALSE, LDL = TRUE)
 Ch02_factor <- Cholesky(K0, perm = FALSE, LDL = TRUE)
 
 # Work precision matrix (static)
-P1_matrix <- K0
 P2_matrix <- K0
 
 time1 <- proc.time()
@@ -125,32 +126,6 @@ printf("Sparse structures building: %.4f s", building_time)
 
 #####
 # CHAN METHOD
-
-chan_smoothing_theta1 <- function(y, phi_V, phi1, theta_01, theta_02, theta2) {
-    Tt <- length(y)
-    P1_matrix@x[idx_diag] <- (main_diag_base * phi1) + phi_V
-    P1_matrix@x[idx_sub]  <- -phi1
-    Ch1_factor <- update(Ch01_factor, P1_matrix)
-
-    b <- y * phi_V
-    Hb_theta2 <- numeric(Tt)
-    Hb_theta2[1] <- -theta2[1]
-    Hb_theta2[2:(Tt-1)] <- theta2[1:(Tt-2)] - theta2[2:(Tt-1)]
-    Hb_theta2[Tt] <- theta2[Tt-1]
-    b <- b + phi1*Hb_theta2
-    b[1] <- b[1] + phi1*(theta_01 + theta_02)
-
-    theta1_hat <- as.numeric(Matrix::solve(Ch1_factor, b, system="A"))
-    list(theta1_hat=theta1_hat, ch=Ch1_factor)
-}
-
-chan_sample_theta1 <- function(build_res) {
-    d <- Matrix::diag(build_res$ch)
-    u <- rnorm(Tt)
-    w <- u / sqrt(d)
-    x <- as.vector(Matrix::solve(build_res$ch, w, system="Lt"))
-    build_res$theta1_hat + x
-}
 
 chan_sample_theta2 <- function(theta1, phi1, phi2, theta_02) {
 
@@ -184,8 +159,6 @@ theta_02_hist <- numeric(N)
 theta1_hist <- matrix(0, N, Tt)
 theta2_hist <- matrix(0, N, Tt)
 ess_is <- numeric(N)
-itr_irls <- numeric(N) # number of iterations of IRLS (for each gibbs step)
-theta1_tilde <- numeric(Tt)
 Weights <- matrix(0, N, M_is)
 
 
@@ -220,6 +193,7 @@ for (n in 1:N) {
     eta_01_bar <- eta_01 + 0.5 * sum(diffs1^2)
     phi1 <- rgamma(1, shape = nu_01_bar, rate = eta_01_bar)
     W1 <- 1/phi1
+    sd1 = sqrt(W1)
 
     # Sample phi2 (conjugated gamma)
     diffs2 <- theta2 - c(theta_02, theta2[-Tt])
@@ -233,34 +207,23 @@ for (n in 1:N) {
     # Importance Sampling for  theta_t1
     #
 
-    # Local approximation (IRLS)
-    theta1_tilde_old <- theta1_tilde
-    for (j in 1:M_irls_max) {
-
-            f_t <- exp(-theta1_tilde)         # observational variance
-            z_t <- theta1_tilde + f_t*y - 1   # pseudo-observation
-
-            res <- chan_smoothing_theta1(z_t, 1/f_t, phi1, theta_01, theta_02, theta2)
-            theta1_tilde <- res$theta1_hat
-
-            if (max(abs(theta1_tilde - theta1_tilde_old)) < tol) break
-            theta1_tilde_old <- theta1_tilde
-    }
-    itr_irls[n] <- j
 
     # Importance Sampling step
     if (M_is > 1) {
         log_w <- numeric(M_is)
         trajectories <- matrix(0, M_is, Tt)
         for (i in 1:M_is) {
-            # sample theta1 proposed
-            theta1_prop  <- chan_sample_theta1(res)
+
+            # sample theta1 proposed -p(theta1 | theta2, W1)
+            theta1_prop <- numeric(Tt)
+            theta1_prop[1] <- rnorm(1, mean=theta_01+theta_02, sd=sd1)
+            for (t in 2:Tt) {
+                theta1_prop[t] <- rnorm(1, mean=theta1_prop[t-1] + theta2[t-1], sd=sd1)
+            }
             trajectories[i, ] <- theta1_prop
 
             # Log-weights: log p(y|theta1) - log g(y|theta1)
-            log_p <- sum(y * theta1_prop - exp(theta1_prop))
-            log_g <- sum(-0.5 * log(2*pi*f_t) - 0.5 * (theta1_prop - z_t)^2 / f_t)
-            log_w[i] <- log_p - log_g
+            log_w[i] <- sum(y * theta1_prop - exp(theta1_prop))
         }
 
         log_w <- log_w - logsumexp(log_w)
@@ -271,7 +234,12 @@ for (n in 1:N) {
         idx <- sample(1:M_is, 1, prob=w)   # index for theta1*
         theta1 <- trajectories[idx, ] # theta1
     } else {
-        theta1  <- chan_sample_theta1(res)
+        theta1_prop <- numeric(Tt)
+        theta1_prop[1] <- rnorm(1, mean=theta_01+theta_02, sd=sd1)
+        for (t in 2:Tt) {
+            theta1_prop[t] <- rnorm(1, mean=theta1_prop[t-1] + theta2[t-1], sd=sd1)
+        }
+        theta1 <- theta1_prop
     }
 
     #

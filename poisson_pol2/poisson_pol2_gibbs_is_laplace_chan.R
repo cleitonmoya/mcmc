@@ -1,27 +1,29 @@
 # Poisson - 2nd Order Polynomial Dynamic Model
-# Particle Gibbs (PG) with Backward Sampling + Component-wise Gibbs for theta_t2
-# Strategy: - Auxiliary Particle Filter (APF) for theta_t1 (scalar state);
-#           - theta2 sampled via Preicison Matrix (Chan Method)
-# Reference: Andrieu, C., Doucet, A., & Holenstein, R. (2010).
-#    Particle Markov Chain Monte Carlo Methods. Journal of the Royal
-#    Statistical Society Series B: Statistical Methodology, 72(3), 269-342.
+#
+# Strategy:
+#  - theta1: Importance Sampling
+#      Importance density: Laplace (normal) approximation
+#  - theta2: Precision sampling (Chan)
+#
 # Author: Cleiton Moya de Almeida
 
+library(Rfast)
 library(Matrix)
 library(coda)
 
-#graphics.off()     # close the plots
-#cat("\014")        # clear the console
+graphics.off()      # close the plots
 rm(list = ls())     # clear the environment
+#cat("\014")         # clear the console
+options(error = function() traceback(2))
+tp <- base::t       # alias to transpose function
 set.seed(42)
-options(error = function() traceback(2))  # more informative traceback
 
 # Change de directory to the same of the current file
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
 source_file <- "poisson_pol2_200"
-data <- readRDS(paste("../data/", source_file, ".rds", sep=""))
+data <- readRDS(paste("../data/", source_file, ".rds", sep = ""))
 y <- data$y
 
 Tt <- length(y)
@@ -39,47 +41,41 @@ if (theta1_present) {
 if (theta2_present)
     theta2_true <- data$theta2
 
-# Auxiliary functions
 printf <- function(...) cat(paste(sprintf(...), "\n"))
 
 logsumexp <- function(x) {
-  cc <- max(x)
-  return(cc + log(sum(exp(x - cc))))
+    cc <- max(x)
+    return(cc + log(sum(exp(x - cc))))
 }
 
-# Log-likelihood
 log_p_yt <- function(yt, theta_t1) {
-  res <- yt * theta_t1 - exp(theta_t1)
-  res[!is.finite(res)] <- -Inf
-  return(res)
+    res <- yt * theta_t1 - exp(theta_t1)
+    res[!is.finite(res)] <- -Inf
+    return(res)
 }
+
 
 # Prior Hyperparameters
 
 # theta_01 ~ N(mu_01, sigma2_01)
-mu_01     <- 0
+mu_01 <- 0
 sigma2_01 <- 100
 
 # theta_02 ~ N(mu_02, sigma2_02)
-mu_02     <- 0
+mu_02 <- 0
 sigma2_02 <- 100
 
-# phi1 = 1/W1 ~ Gamma(nu_01, eta_01)
+# W1 ~ InvGamma(nu_01, eta_01)
 nu_01 <- 2
-eta_01  <- 0.01
+eta_01 <- 0.01
 
-# phi2 = 1/W2 ~ Gamma(nu_02, eta_02)
+# W2 ~ InvGamma(nu_02, eta_02)
 nu_02 <- 2
-eta_02  <- 0.0001
+eta_02 <- 0.0001
 
-
-# Simulation parameters
-N <- 10000      # number of Gibbs iterations
-K <- 50          # number of particles
-burnin <- 2500
 
 # Initial Values
-theta1 <- numeric(Tt)
+theta1<- numeric(Tt)
 theta2 <- numeric(Tt)
 theta_01 <- 0
 theta_02 <- 0
@@ -87,14 +83,12 @@ W1 <- 0.01
 W2 <- 0.01
 
 
-# Auxiliary variables
-W1_hist <- numeric(N)
-W2_hist <- numeric(N)
-theta_01_hist <- numeric(N)
-theta_02_hist <- numeric(N)
-theta1_hist <- matrix(0, N, Tt)
-theta2_hist <- matrix(0, N, Tt)
-ess_smc <- numeric(N)
+# Simulation Parameters
+N <- 10000
+burnin <- 1000
+M_irls_max <- 20       # maximum iterations for IRLS
+M_is <- 3
+tol <- 1e-4
 
 
 #####
@@ -122,17 +116,45 @@ sub_pattern <- bandSparse(n=Tt, k=c(0, -1),
 idx_sub <- which(sub_pattern@x)
 
 # Initial symbolic Cholesky factor
+Ch01_factor <- Cholesky(K0, perm = FALSE, LDL = TRUE)
 Ch02_factor <- Cholesky(K0, perm = FALSE, LDL = TRUE)
 
 # Work precision matrix (static)
+P1_matrix <- K0
 P2_matrix <- K0
 
-# Sparse matrix building time
 time1 <- proc.time()
 building_time <- (time1 - start_time)[[1]]
 printf("Sparse structures building: %.4f s", building_time)
 
+#####
+# CHAN METHOD
 
+chan_smoothing_theta1 <- function(y, phi_V, phi1, theta_01, theta_02, theta2) {
+    Tt <- length(y)
+    P1_matrix@x[idx_diag] <- (main_diag_base * phi1) + phi_V
+    P1_matrix@x[idx_sub]  <- -phi1
+    Ch1_factor <- update(Ch01_factor, P1_matrix)
+
+    b <- y * phi_V
+    Hb_theta2 <- numeric(Tt)
+    Hb_theta2[1] <- -theta2[1]
+    Hb_theta2[2:(Tt-1)] <- theta2[1:(Tt-2)] - theta2[2:(Tt-1)]
+    Hb_theta2[Tt] <- theta2[Tt-1]
+    b <- b + phi1*Hb_theta2
+    b[1] <- b[1] + phi1*(theta_01 + theta_02)
+
+    theta1_hat <- as.numeric(Matrix::solve(Ch1_factor, b, system="A"))
+    list(theta1_hat=theta1_hat, ch=Ch1_factor)
+}
+
+chan_sample_theta1 <- function(build_res) {
+    d <- Matrix::diag(build_res$ch)
+    u <- rnorm(Tt)
+    w <- u / sqrt(d)
+    x <- as.vector(Matrix::solve(build_res$ch, w, system="Lt"))
+    build_res$theta1_hat + x
+}
 
 chan_sample_theta2 <- function(theta1, phi1, phi2, theta_02) {
 
@@ -158,8 +180,22 @@ chan_sample_theta2 <- function(theta1, phi1, phi2, theta_02) {
 }
 
 
+# Auxiliary varables
+W1_hist <- numeric(N)
+W2_hist <- numeric(N)
+theta_01_hist <- numeric(N)
+theta_02_hist <- numeric(N)
+theta1_hist <- matrix(0, N, Tt)
+theta2_hist <- matrix(0, N, Tt)
+ess_is <- numeric(N)
+itr_irls <- numeric(N) # number of iterations of IRLS (for each gibbs step)
+theta1_tilde <- numeric(Tt)
+Weights <- matrix(0, N, M_is)
+
+
+#####
 # Gibbs sampling
-start_time = proc.time() # execution time
+start_time <- proc.time()
 for (n in 1:N) {
 
     if (n %% 1000 == 0) {
@@ -168,98 +204,83 @@ for (n in 1:N) {
         printf("Iteration %d / %d | Elapsed CPU time: %.0f s", n, N, elapsed_time)
     }
 
-    # Sample theta_02
-    sigma2_02_bar <- (1/sigma2_02 + 1/W1 + 1/W2)^(-1)
-    mu_02_bar <- sigma2_02_bar * (
-        (theta1[1] - theta_01)/W1 + theta2[1]/W2 +
-        mu_02/sigma2_02
-    )
-    theta_02 <- rnorm(1, mean=mu_02_bar, sd=sqrt(sigma2_02_bar))
-
-    # Sample theta_01
+    # Sample theta_01 (conjugated normal)
     sigma2_01_bar <- (1 / sigma2_01 + 1 / W1)^(-1)
-    mu_01_bar <- sigma2_01_bar *
-        (mu_01 / sigma2_01 + (theta1[1] - theta_02) / W1)
+    mu_01_bar <- sigma2_01_bar * (mu_01 / sigma2_01 +
+                                      (theta1[1] - theta_02) / W1)
     theta_01 <- rnorm(1, mean = mu_01_bar, sd = sqrt(sigma2_01_bar))
 
-    # Sample W1
-    dif1   <- theta1 - c(theta_01, theta1[-Tt])
+    # Sample theta_02 (conjugated normal)
+    sigma2_02_bar <- (1 / sigma2_02 + 1 / W1 + 1 / W2)^(-1)
+    mu_02_bar <- sigma2_02_bar * ((theta1[1] - theta_01) / W1 +
+                                      theta2[1] / W2 +
+                                      mu_02 / sigma2_02)
+    theta_02 <- rnorm(1, mean = mu_02_bar, sd = sqrt(sigma2_02_bar))
+
+    # Sample phi1 (conjugated gamma)
+    dif1 <- theta1- c(theta_01, theta1[-Tt])
     diffs1 <- dif1 - c(theta_02, theta2[-Tt])
     nu_01_bar <- nu_01 + Tt / 2
-    eta_01_bar  <- eta_01 + 0.5 * sum(diffs1^2)
+    eta_01_bar <- eta_01 + 0.5 * sum(diffs1^2)
     phi1 <- rgamma(1, shape = nu_01_bar, rate = eta_01_bar)
-    W1 <- 1 / phi1
-    sd_W1 <- sqrt(W1)
+    W1 <- 1/phi1
 
-    # Sample W2
+    # Sample phi2 (conjugated gamma)
     diffs2 <- theta2 - c(theta_02, theta2[-Tt])
     nu_02_bar <- nu_02 + Tt / 2
-    eta_02_bar  <- eta_02 + 0.5 * sum(diffs2^2)
+    eta_02_bar <- eta_02 + 0.5 * sum(diffs2^2)
     phi2 <- rgamma(1, shape = nu_02_bar, rate = eta_02_bar)
-    W2 <- 1 / phi2
-    sd_W2 <- sqrt(W2)
+    W2 <- 1/phi2
 
 
     #
-    # Conditional SMC for theta_t1
+    # Importance Sampling for  theta_t1
     #
-    theta_1_k   <- matrix(0, Tt, K)
-    log_w_tilde <- matrix(0, Tt, K)
 
-    # t = 1
-    theta_1_k[1, ] <- rnorm(K, mean = theta_01 + theta_02, sd = sd_W1)
-    theta_1_k[1, K] <- theta1[1]
+    # Local approximation (IRLS)
+    theta1_tilde_old <- theta1_tilde
+    for (j in 1:M_irls_max) {
 
-    log_w_1 <- log_p_yt(y[1], theta_1_k[1, ])
-    log_w_tilde[1, ] <- log_w_1 - logsumexp(log_w_1) # normalizing
+            f_t <- exp(-theta1_tilde)         # observational variance
+            z_t <- theta1_tilde + f_t*y - 1   # pseudo-observation
 
-    # t = 2, ..., T
-    for (t in 2:Tt) {
-        # Predictor (auxiliary variable)
-        theta_hat_t1_k = theta_1_k[t - 1, ] + theta2[t - 1]
+            res <- chan_smoothing_theta1(z_t, 1/f_t, phi1, theta_01, theta_02, theta2)
+            theta1_tilde <- res$theta1_hat
 
-        # Auxiliary weights
-        log_lambda_k = y[t] * theta_hat_t1_k - exp(theta_hat_t1_k)
+            if (max(abs(theta1_tilde - theta1_tilde_old)) < tol) break
+            theta1_tilde_old <- theta1_tilde
+    }
+    itr_irls[n] <- j
 
-        # First stage resampling
-        log_aux <- log_w_tilde[t - 1, ] + log_lambda_k
-        A <- sample(1:K, K, replace = TRUE, prob = exp(log_aux - max(log_aux)))
-        A[K] <- K   # reference path
+    # Importance Sampling step
+    if (M_is > 1) {
+        log_w <- numeric(M_is)
+        trajectories <- matrix(0, M_is, Tt)
+        for (i in 1:M_is) {
+            # sample theta1 proposed
+            theta1_prop  <- chan_sample_theta1(res)
+            trajectories[i, ] <- theta1_prop
 
-        # Propagation
-        theta_t1_k <- rnorm(K, mean=theta_1_k[t-1, A] + theta2[t-1], sd=sd_W1)
-        theta_t1_k[K] <- theta1[t]
-        theta_1_k[t, ] <- theta_t1_k
+            # Log-weights: log p(y|theta1) - log g(y|theta1)
+            log_p <- sum(y * theta1_prop - exp(theta1_prop))
+            log_g <- sum(-0.5 * log(2*pi*f_t) - 0.5 * (theta1_prop - z_t)^2 / f_t)
+            log_w[i] <- log_p - log_g
+        }
 
-        # Updated weights
-        log_w_t <- log_p_yt(y[t], theta_1_k[t, ]) - log_lambda_k[A]
-        log_w_tilde[t, ] <- log_w_t - logsumexp(log_w_t)
+        log_w <- log_w - logsumexp(log_w)
+        w <- exp(log_w)
+        Weights[n, ] <- w
+        ess_is[n] <- 1 / sum(exp(2*log_w))
+
+        idx <- sample(1:M_is, 1, prob=w)   # index for theta1*
+        theta1 <- trajectories[idx, ] # theta1
+    } else {
+        theta1  <- chan_sample_theta1(res)
     }
 
-    ess_smc[n] <- 1 / sum(exp(2 * (log_w_tilde[Tt, ])))
-
-
-    # backward sampling for theta1
-    # Backward weights: w_t^k * N(theta1[t+1] | theta_t1^k + theta2[t], W1)
-    k_final <- sample(1:K, 1, prob = exp(log_w_tilde[Tt, ] - max(log_w_tilde[Tt, ])))
-    theta1[Tt] <- theta_1_k[Tt, k_final]
-
-    for (t in (Tt - 1):1) {
-        log_bw <- log_w_tilde[t, ] +
-            dnorm(theta1[t+1],
-                mean = theta_1_k[t, ] + theta2[t],
-                sd = sd_W1,
-                log = TRUE
-            )
-        log_bw <- log_bw - max(log_bw)
-        bw <- exp(log_bw)
-        bw <- bw / sum(bw)
-        b  <- sample(1:K, 1, prob = bw)
-        theta1[t] <- theta_1_k[t, b]
-    }
-
-
-    # Sample theta2 - Chan method
+    #
+    # Chan sampling for theta_t2 | theta1, W1, W2
+    #
     theta2 <- chan_sample_theta2(theta1, phi1, phi2, theta_02)
 
     # Store the results
@@ -269,16 +290,18 @@ for (n in 1:N) {
     W2_hist[n] <- W2
     theta1_hist[n, ] <- theta1
     theta2_hist[n, ] <- theta2
+
 }
 
-#### Simulation summary
 
+# Simulation summary ####
 # Execution time
 end_time <- proc.time()
 sampling_time <- (end_time - time1)[[1]]
 elapsed_time <- (end_time - start_time)[[1]]
 printf("Sampling: %.2f s", sampling_time)
 printf("Total CPU time: %.0f s", elapsed_time)
+
 
 # Posterior mean
 theta1_mean <- colMeans(theta1_hist[-(1:burnin), ])
@@ -439,9 +462,9 @@ lines(density(W2_hist[-(1:burnin)]), col = "blue", lwd = 2)
 
 # Traceplot for W1 and W2 ####
 par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex = 0.8)
-plot(W1_hist, type="l", xlab="n", ylab="W", main="Traceplot of W1")
+plot(W1_hist[-(1:burnin)], type="l", xlab="n", ylab="W", main="Traceplot of W1")
 abline(v=burnin, col="red")
-plot(W2_hist, type="l", xlab="n", ylab="W", main="Traceplot of W2")
+plot(W2_hist[-(1:burnin)], type="l", xlab="n", ylab="W", main="Traceplot of W2")
 abline(v=burnin, col="red")
 
 
@@ -498,7 +521,6 @@ lines(density(1/W2_hist[-(1:burnin)]), col="blue", lwd=2)
 legend("topright", legend=c("Prior","Posterior"), col=c("red","blue"), lwd=2)
 
 
-# Effective sample size ####
+# Effective Sample Size (IS)
 par(mfrow=c(1,1), mar=c(4,4,2,2), cex=0.8)
-plot(ess_smc, type="l", main="Effective Sample Size - SMC")
-abline(v=burnin, col="red")
+plot(ess_is, type="l", main="Effective Sample Size - IS")
