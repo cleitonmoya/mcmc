@@ -1,5 +1,5 @@
 # Poisson - 2nd Order Polynomial Dynamic Model
-# Gibbs with Collapsed Sampler (Cross-Entropy) for W1
+# Gibbs with Collapsed Sampler with Cross-Entropy for W1
 # Strategy:
 #   - Pre-run: standard Gibbs (R_prerun iterations) to collect W1 samples
 #   - CE calibration: fit Gamma(c_hat, d_hat) to pre-run W1 samples
@@ -7,8 +7,9 @@
 #       * theta_02, theta_01 : conjugated Normal (as before)
 #       * W1                 : collapsed MH with CE proposal (marginalizes over theta1)
 #       * theta1*            : IRLS + Chan sampler given accepted W1
-#       * W2                 : conjugated InvGamma (as before)
-#       * theta2             : component-wise Gibbs Normal (as before)
+#       * 1/W2               : conjugated Gamma
+#       * theta2             : precision sampler (Chan)
+#
 # Author: Cleiton Moya de Almeida
 
 library(invgamma)
@@ -29,8 +30,8 @@ data <- readRDS(paste("../data/", source_file, ".rds", sep = ""))
 y <- data$y
 
 Tt <- length(y)
-#t_observed <- c(250, 500, 750, 1000)
-t_observed <- c(50, 100, 150, 175)
+if (Tt == 200) t_obs <- c(50, 100, 150, 175)
+if (Tt == 2000) t_obs <- c(500, 1000, 1500, 1750)
 
 theta1_present <- TRUE
 theta2_present <- FALSE
@@ -42,15 +43,15 @@ if (theta1_present) {
 if (theta2_present)
     theta2_true <- data$theta2
 
-# ---------------------------------------------------------------------------
-# Utility functions
-# ---------------------------------------------------------------------------
+#
+# Auxiliary functions
+#
 
 printf <- function(...) cat(paste(sprintf(...), "\n"))
 
 logsumexp <- function(x) {
     cc <- max(x)
-    cc + log(sum(exp(x - cc)))
+    return(cc + log(sum(exp(x - cc))))
 }
 
 # Chan precision sampler
@@ -572,12 +573,10 @@ par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
 plot(z_theta1, type="l", main=expression("Geweke diagnostic for " * theta[t1]),
      xlab="t", ylab="Z score")
 abline(h=c(-1.96, 1.96), col="red")
-abline(h=z_theta1_mean, col="blue")
 
 plot(z_theta2, type="l", main=expression("Geweke diagnostic for " * theta[t2]),
      xlab="t", ylab="Z score")
 abline(h=c(-1.96, 1.96), col="red")
-abline(h=z_theta1_mean, col="blue")
 
 
 ####

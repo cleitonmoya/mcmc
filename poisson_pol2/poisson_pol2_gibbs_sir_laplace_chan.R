@@ -92,7 +92,8 @@ tol <- 1e-4
 
 
 #####
-# FIXED SPARSE STRUCTURES FOR CHAN METHOD ####
+# Static sparse matrix for the Chan Method
+
 start_time = proc.time() # execution time
 
 # Base for the prior Precision Matrix K
@@ -127,8 +128,9 @@ time1 <- proc.time()
 building_time <- (time1 - start_time)[[1]]
 printf("Sparse structures building: %.4f s", building_time)
 
+
 #####
-# CHAN METHOD
+# Chan Method functions
 
 chan_smoothing_theta1 <- function(y, phi_V, phi1, theta_01, theta_02, theta2) {
     Tt <- length(y)
@@ -148,6 +150,7 @@ chan_smoothing_theta1 <- function(y, phi_V, phi1, theta_01, theta_02, theta2) {
     list(theta1_hat=theta1_hat, ch=Ch1_factor)
 }
 
+
 chan_sample_theta1 <- function(build_res) {
     d <- Matrix::diag(build_res$ch)
     u <- rnorm(Tt)
@@ -155,6 +158,7 @@ chan_sample_theta1 <- function(build_res) {
     x <- as.vector(Matrix::solve(build_res$ch, w, system="Lt"))
     build_res$theta1_hat + x
 }
+
 
 chan_sample_theta2 <- function(theta1, phi1, phi2, theta_02) {
 
@@ -180,7 +184,10 @@ chan_sample_theta2 <- function(theta1, phi1, phi2, theta_02) {
 }
 
 
-# Auxiliary varables
+#####
+# Gibbs sampling
+
+# Auxiliary variables
 W1_hist <- numeric(N)
 W2_hist <- numeric(N)
 theta_01_hist <- numeric(N)
@@ -192,10 +199,8 @@ itr_irls <- numeric(N) # number of iterations of IRLS (for each gibbs step)
 theta1_tilde <- numeric(Tt)
 Weights <- matrix(0, N, M_is)
 
-
-#####
-# Gibbs sampling
 start_time <- proc.time()
+
 for (n in 1:N) {
 
     if (n %% 1000 == 0) {
