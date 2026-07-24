@@ -168,6 +168,12 @@ for (n in 1:N) {
         printf("Iteration %d / %d | Elapsed CPU time: %.0f s", n, N, elapsed_time)
     }
 
+    # Sample theta_01
+    sigma2_01_bar <- (1 / sigma2_01 + 1 / W1)^(-1)
+    mu_01_bar <- sigma2_01_bar *
+        (mu_01 / sigma2_01 + (theta1[1] - theta_02) / W1)
+    theta_01 <- rnorm(1, mean = mu_01_bar, sd = sqrt(sigma2_01_bar))
+
     # Sample theta_02
     sigma2_02_bar <- (1/sigma2_02 + 1/W1 + 1/W2)^(-1)
     mu_02_bar <- sigma2_02_bar * (
@@ -175,12 +181,6 @@ for (n in 1:N) {
         mu_02/sigma2_02
     )
     theta_02 <- rnorm(1, mean=mu_02_bar, sd=sqrt(sigma2_02_bar))
-
-    # Sample theta_01
-    sigma2_01_bar <- (1 / sigma2_01 + 1 / W1)^(-1)
-    mu_01_bar <- sigma2_01_bar *
-        (mu_01 / sigma2_01 + (theta1[1] - theta_02) / W1)
-    theta_01 <- rnorm(1, mean = mu_01_bar, sd = sqrt(sigma2_01_bar))
 
     # Sample W1
     dif1   <- theta1 - c(theta_01, theta1[-Tt])

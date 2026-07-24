@@ -33,7 +33,7 @@ set.seed(42)
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source <- "poisson_pol2_2000"
+source <- "poisson_pol2_200"
 data <- readRDS(paste("../data/", source, ".rds", sep=""))
 y <- data$y
 #y <- as.data.frame(Seatbelts)$DriversKilled

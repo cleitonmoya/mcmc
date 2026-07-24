@@ -203,7 +203,7 @@ for (n in 1:N) {
     W2 <- 1/phi2
 
     # Sample theta_t1 (random walking Metropolis) and
-    #        theta_t2 ~ N()
+    #        theta_t2 (cojugated normal)
     n_ac <- 0 # number of accepted samples
     for (t in 1:Tt) {
 

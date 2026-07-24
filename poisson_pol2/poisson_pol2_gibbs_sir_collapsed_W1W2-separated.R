@@ -67,7 +67,7 @@ logsumexp <- function(x) {
 #####
 # Static sparse matrix for the Chan Method
 
-start_time = proc.time() # execution time
+start_time = proc.time()
 
 # Base for the prior Precision Matrix K
 sub_diag_base <- rep(-1, Tt-1)
@@ -99,8 +99,7 @@ log_det_K0 <- 2 * as.numeric(determinant(Ch01_factor, logarithm = TRUE)$modulus)
 P1_matrix <- K0
 P2_matrix <- K0
 
-time1 <- proc.time()
-building_time <- (time1 - start_time)[[1]]
+building_time <- (proc.time()- start_time)[[1]]
 printf("Sparse structures building: %.4f s", building_time)
 
 
@@ -437,9 +436,9 @@ ess_sir_hist <- numeric(N)     # SIR of theta1
 printf("Starting pre-run (%d iterations)...", R_prerun)
 phi1_prerun <- numeric(R_prerun)
 phi2_prerun <- numeric(R_prerun)
-start_time <- proc.time()
+time_prerun <- proc.time()
 
-for (n in 1:R_prerun) {
+for (r in 1:R_prerun) {
 
     # Sample theta_02 (conjugated Normal)
     sigma2_02_bar <- (1 / sigma2_02 + 1 / W1 + 1 / W2)^(-1)
@@ -460,7 +459,7 @@ for (n in 1:R_prerun) {
     eta_01_bar  <- eta_01 + 0.5 * sum(diffs1^2)
     phi1 <- rgamma(1, shape = nu_01_bar, rate = eta_01_bar)
     W1 <- 1/phi1
-    phi1_prerun[n] <- phi1
+    phi1_prerun[r] <- phi1
 
     # Sample phi2 (conjugated Gamma)
     diffs2 <- theta2 - c(theta_02, theta2[-Tt])
@@ -468,20 +467,21 @@ for (n in 1:R_prerun) {
     eta_02_bar  <- eta_02 + 0.5 * sum(diffs2^2)
     phi2 <- rgamma(1, shape = nu_02_bar, rate = eta_02_bar)
     W2 <- 1/phi2
-    phi2_prerun[n] <- phi2
+    phi2_prerun[r] <- phi2
 
     # IRLS + Chan for theta1*
-    irls_out <- run_irls(theta1_tilde, theta2, theta_01, theta_02,
+    irls_cur <- run_irls(theta1_tilde, theta2, theta_01, theta_02,
                          phi1, y, tol, M_irls_max)
-    theta1_tilde <- irls_out$theta1_tilde
-    theta1_star  <- chan_sample_theta1(irls_out$res)
+    theta1_tilde <- irls_cur$theta1_tilde
+    theta1_star  <- chan_sample_theta1(irls_cur$res)
 
     # Chan sampler for theta2
     theta2_build <- chan_smoothing_theta2(theta1_star, phi1, phi2, theta_02)
     theta2 <- chan_sample_theta2(theta2_build)
 }
 
-elapsed_prerun <- (proc.time() - start_time)[[1]]
+time1 <- proc.time()
+elapsed_prerun <- (time1 - time_prerun)[[1]]
 printf("Pre-run done in %.0f s", elapsed_prerun)
 
 #####
@@ -503,11 +503,7 @@ printf("CE Gamma proposal for phi2: shape = %.4f, rate = %.4f (mean phi2 = %.6f,
 #####
 # Gibbs Loop
 
-# Compute initial IRLS and log integrated likelihood (W1)
-irls_cur     <- run_irls(theta1_tilde, theta2, theta_01, theta_02,
-                         phi1, y, tol, M_irls_max)
-theta1_tilde <- irls_cur$theta1_tilde
-
+# Integrated likelihood for W1
 res_lik <- is_log_lik(irls_cur, y, phi1, theta2, theta_01, theta_02, M_is_lik)
 log_lik_cur <- res_lik$log_lik
 
