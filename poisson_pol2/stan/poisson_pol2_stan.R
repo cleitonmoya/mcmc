@@ -2,9 +2,9 @@
 # MCMC: NUTS (Stan)
 # Author: Cleiton Moya de Almeida
 
-graphics.off()    # close the plots
-rm(list = ls())   # clear the environment
-cat("\014")       # clear the console
+#graphics.off()    # close the plots
+#rm(list = ls())   # clear the environment
+#cat("\014")       # clear the console
 options(error = function() traceback(2))
 set.seed(42)
 
@@ -18,7 +18,7 @@ printf <- function(...) {
 }
 
 # RStan configuration
-options(mc.cores = 1)   
+options(mc.cores = 1)
 rstan_options(auto_write = FALSE)
 
 # Change de directory to the same of the current file

@@ -20,10 +20,10 @@ data {
   // Prior hyperparameters
   real mu_01;
   real<lower=0> sigma2_01;
-  
+
   real mu_02;
   real<lower=0> sigma2_02;
-  
+
   real<lower=0> nu_01;
   real<lower=0> eta_01;
 
