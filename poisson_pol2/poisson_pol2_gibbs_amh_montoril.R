@@ -15,28 +15,30 @@
 #  theta_t1: Adaptive Metropolis within Gibbs (Roberts & Rosenthal, 2009)
 #            with continuous Robbins-Monro update of the \log\sigma_t
 #            (Andrieu & Thoms 2008, Eq. 20/22) instead of batch update.
+#  theta2: Chan
+#
 #
 # Author: Cleiton Moya de Almeida
 
+library(Rfast)      # provide colMedians()
+library(coda)
+library(Matrix)
 
 #graphics.off()     # close the plots
 rm(list = ls())     # clear the environment
-#cat("\014")         # clear the console
+#cat("\014")        # clear the console
 tp <- Matrix::t     # matrix transpose alias
 options(error = function() traceback(2)) # more informative traceback
 set.seed(42)
-
-library(Rfast)      # provide colMedians()
-library(coda)
 
 # Change de directory to the same of the current file
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source <- "constant_2000_1"
+source <- "quadratic_200_1"
 data <- readRDS(paste("../../cobalebeb2027/data/simulated/", source, ".rds", sep=""))
 y <- data$y
-#y <- as.data.frame(Seatbelts)$DriversKilled
+
 Tt <- length(y) # dimension T
 if (Tt == 200) t_obs <- c(50, 100, 150, 175)
 if (Tt == 400) t_obs <- c(75, 100, 200, 300)
@@ -45,6 +47,7 @@ if (Tt == 2000) t_obs <- c(500, 1000, 1500, 1750)
 
 theta1_present <- TRUE
 theta2_present <- FALSE
+
 if (theta1_present) {
     theta1_true <- data$theta
     lambda_true <- exp(theta1_true)
@@ -116,13 +119,9 @@ sample_theta_t1 <- function(theta_t1_current, theta_tm11, theta_tp11,
     return(list(theta_t1=theta_t1, ac=ac))
 }
 
+
 #####
-# SIMULATION MAIN PARAMETERS
-N <- 10000                 # Number of steps
-burnin <- 1000             # Number of burn-in steps
-ac_ref <- 0.44             # Acceptance ratio target for theta_t1
-varsigma2 <- rep(0.02, Tt) # RWM variance initialization (adaptive algorithm)
-batch_size <- 20           # Batch size to update varsigma2
+# SIMULATION PARAMETERS
 
 # Prior hyperparameters
 # theta_01 ~ N(mu_01, sigma2_01)
@@ -144,16 +143,77 @@ eta_02 <- 0.0001
 # Initialization
 W2 <- 0.01
 W1 <- 0.01
-phi1 <- 1/W1
-phi2 <- 1/W2
 theta_01 <- 0
 theta_02 <- 0
 theta1 <- numeric(Tt)
 theta2 <- numeric(Tt)
 
 
+N <- 10000                 # Number of steps
+burnin <- 1000             # Number of burn-in steps
+ac_ref <- 0.44             # Acceptance ratio target for theta_t1
+varsigma2 <- rep(0.02, Tt) # RWM variance initialization (adaptive algorithm)
+
+
 #####
-# Gibbs sampling
+# FIXED SPARSE STRUCTURES FOR CHAN METHOD ####
+start_time = proc.time() # execution time
+
+# Base for the prior Precision Matrix K
+sub_diag_base <- rep(-1, Tt-1)
+main_diag_base <- c(rep(2, Tt-1), 1)
+K0 <- bandSparse(n=Tt, k=c(0, -1),
+                 diagonals=list(main_diag_base, sub_diag_base),
+                 symmetric = TRUE)
+
+# diagonal mask
+# @x: slot of the Sparce matrix (S4 object) that contains the non-zero values
+diag_pattern <- bandSparse(n=Tt, k=c(0, -1),
+                           diagonals=list(rep(TRUE, Tt), rep(FALSE, Tt-1)),
+                           symmetric=TRUE)
+idx_diag <- which(diag_pattern@x) # index of subpattern@x which is non-zero
+
+# subdiagonal mask
+sub_pattern <- bandSparse(n=Tt, k=c(0, -1),
+                          diagonals=list(rep(FALSE, Tt), rep(TRUE, Tt-1)),
+                          symmetric=TRUE)
+idx_sub <- which(sub_pattern@x)
+
+# Initial symbolic Cholesky factor
+Ch02_factor <- Cholesky(K0, perm = FALSE, LDL = TRUE)
+
+# Work precision matrix (static)
+P2_matrix <- K0
+
+time1 <- proc.time()
+building_time <- (time1 - start_time)[[1]]
+printf("Sparse structures building: %.4f s", building_time)
+
+#####
+# CHAN METHOD
+chan_sample_theta2 <- function(theta1, phi1, phi2, theta_02) {
+
+    z <- diff(theta1)   # z_t = theta1[t+1] - theta1[t], t=1,...,T-1
+
+    diag_obs <- c(rep(phi1, Tt-1), 0)
+    P2_matrix@x[idx_diag] <- (main_diag_base*phi2) + diag_obs
+    P2_matrix@x[idx_sub]  <- -phi2
+
+    Ch2_factor <- update(Ch02_factor, P2_matrix)
+
+    b <- numeric(Tt)
+    b[1:(Tt-1)] <- z * phi1
+    b[1] <- b[1] + theta_02 * phi2
+
+    theta2_hat <- as.numeric(Matrix::solve(Ch2_factor, b, system="A"))
+    d <- Matrix::diag(Ch2_factor)
+    u <- rnorm(Tt)
+    w <- u/sqrt(d)
+    x <- as.vector(Matrix::solve(Ch2_factor, w, system="Lt"))
+
+    return(theta2_hat + x)
+}
+
 
 # Auxiliary vectors and matrix to store the results
 theta1_hist <- matrix(nrow=N, ncol=Tt)
@@ -163,6 +223,9 @@ W2_hist <- numeric(N)
 theta_01_hist <-numeric(N)
 theta_02_hist <-numeric(N)
 ac_hist <- matrix(0, nrow=N, ncol=Tt)
+
+#####
+# Gibbs sampling
 
  # Main loop
 start_time = proc.time() # execution time
@@ -201,25 +264,11 @@ for (n in 1:N) {
     phi2 <- rgamma(1, nu_02_bar, eta_02_bar)
     W2 <- 1/phi2
 
-    # Sample theta_t1 (adaptive random walking Metropolis) and
-    #        theta_t2 (cojugated normal)
-
-    # if (n %% batch_size == 1 && n > 1) {
-    #     b <- (n-1)/batch_size
-    #     delta <- min(0.01, 1/sqrt(b))
-    #
-    #     # Mean accepted ratio for each t in the last 50 iterations
-    #     alpha <- Rfast::colmeans(ac_hist[(n-batch_size):(n-1), ])
-    #     c <- exp(2*delta*(2*as.numeric(alpha > ac_ref) - 1))
-    #     varsigma2 <- c*varsigma2
-    # }
-
-
+    # Sample theta_t1 (random walking Metropolis step)
+    n_ac <- 0 # number of accepted samples
     for (t in 1:Tt) {
 
         if (t < Tt) {
-
-            sigma2_star <- (1/W1 + 2/W2)^(-1) # for theta_t2
 
             if (t==1) {
                 # theta_t11
@@ -227,17 +276,12 @@ for (n in 1:N) {
                                        theta2[t], theta_02,
                                        y[t], W1, varsigma2[t], final_t=FALSE)
                 theta1[t] <- res$theta_t1
-                # theta_t12
-                mu_star <- sigma2_star*((theta1[t+1] - theta1[t])/W1 +
-                                            (theta_02 + theta2[t+1])/W2)
             } else {
 
                 res <- sample_theta_t1(theta1[t], theta1[t-1], theta1[t+1],
                                        theta2[t], theta2[t-1],
                                        y[t], W1, varsigma2[t], final_t=FALSE)
                 theta1[t] <- res$theta_t1
-                mu_star <- sigma2_star*((theta1[t+1] - theta1[t])/W1 +
-                                            (theta2[t-1] + theta2[t+1])/W2)
             }
 
         } else {
@@ -245,11 +289,8 @@ for (n in 1:N) {
                                    theta2[t], theta2[t-1],
                                    y[t], W1, varsigma2[t], final_t=TRUE)
             theta1[t] <- res$theta_t1
-            mu_star <- theta2[t-1]
-            sigma2_star <- W2
         }
 
-        theta2[t] <- rnorm(1, mean=mu_star, sd=sqrt(sigma2_star))
         ac_hist[n,t] <- res$ac # flag: sample accepted(1) or not (0)
     }
 
@@ -258,6 +299,8 @@ for (n in 1:N) {
     ls <- log(varsigma2)/2 + delta*(ac_hist[n,] - ac_ref)
     varsigma2 <- exp(2*ls)
 
+    # Sample theta_t2 (Chan Method)
+    theta2 <- chan_sample_theta2(theta1, phi1, phi2, theta_02)
 
     # Store the sampled values
     theta_01_hist[n] <- theta_01
@@ -271,19 +314,22 @@ for (n in 1:N) {
 # Simulation summary ####
 # Execution time
 end_time <- proc.time()
+sampling_time <- (end_time - time1)[[1]]
 elapsed_time <- (end_time - start_time)[[1]]
-printf("Total elapsed CPU time: %.0f s", elapsed_time)
+printf("Sampling: %.2f s", sampling_time)
+printf("Total CPU time: %.0f s", elapsed_time)
+
 printf("Mean acception ratio of theta1: %.2f", mean(ac_hist))
 
 # Posterior mean
-theta1_mean <- Rfast::colmeans(theta1_hist[-(1:burnin), ])
-theta2_mean <- Rfast::colmeans(theta2_hist[-(1:burnin), ])
+theta1_mean <- colMeans(theta1_hist[-(1:burnin), ])
+theta2_mean <- colMeans(theta2_hist[-(1:burnin), ])
 lambda_mean <- exp(theta1_mean)
 
 printf("W1 mean: %.5f", mean(W1_hist[-(1:burnin)]))
-printf("W1 median: %.5f", Rfast::Median(W1_hist[-(1:burnin)]))
+printf("W1 median: %.5f", median(W1_hist[-(1:burnin)]))
 printf("W2 mean: %.5f", mean(W2_hist[-(1:burnin)]))
-printf("W2 median: %.5f", Rfast::Median(W2_hist[-(1:burnin)]))
+printf("W2 median: %.5f", median(W2_hist[-(1:burnin)]))
 
 
 # Log-likelihood
@@ -435,13 +481,16 @@ lines(density(W2_hist[-(1:burnin)]), col = "blue", lwd = 2)
 # Traceplot for W1 and W2 ####
 par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex = 0.8)
 plot(W1_hist[-(1:burnin)], type="l", xlab="n", ylab="W", main="Traceplot of W1")
+abline(v=burnin, col="red")
 plot(W2_hist[-(1:burnin)], type="l", xlab="n", ylab="W", main="Traceplot of W2")
+abline(v=burnin, col="red")
 
 
 # Traceplots for theta_t1 ####
 par(mfrow = c(2, 2))
 for (t in t_obs) {
     plot(theta1_hist[, t], type="l", main=bquote(theta[.(t)*","*1]), xlab="", ylab="")
+    abline(v=burnin, col="red")
 }
 
 
@@ -449,6 +498,7 @@ for (t in t_obs) {
 par(mfrow = c(2, 2))
 for (t in t_obs) {
     plot(theta2_hist[, t], type="l", main=bquote(theta[.(t)*","*2]), xlab="", ylab="")
+    abline(v=burnin, col="red")
 }
 
 
@@ -459,12 +509,14 @@ plot(Rfast::rowmeans(ac_hist), type="l", xlab="n", ylab="ratio",
 abline(h=ac_ref, col="blue", lty=2)
 abline(v=burnin, col="red")
 
+
 # Mean acceptance ratio of theta_t1 (over n) ####
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
 plot(Rfast::colmeans(ac_hist[-(1:burnin),]), type="l", xlab="t", ylab="ratio", ylim=c(0.4, 0.5),
      main=expression("Acceptance ratio of " * theta[t*1] * " (mean over n)"))
 abline(h=ac_ref, col="blue", lty=2)
 abline(h=ac_ref, col="red")
+
 
 # Effective sample size ####
 par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex=0.8) # bottom left, top, right
@@ -501,3 +553,4 @@ curve(dgamma(x, shape=nu_02, rate=eta_02), from=0, to=max(1/W2_hist[-(1:burnin)]
       main="phi2 prior vs. posterior", col="red", lwd=2)
 lines(density(1/W2_hist[-(1:burnin)]), col="blue", lwd=2)
 legend("topright", legend=c("Prior","Posterior"), col=c("red","blue"), lwd=2)
+

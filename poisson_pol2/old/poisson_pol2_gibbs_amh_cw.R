@@ -12,9 +12,7 @@
 #  1/W2 ~ gamma(shape=nu_02, rate=eta_02)
 #
 # MCMC:
-#  theta_t1: Adaptive Metropolis within Gibbs (Roberts & Rosenthal, 2009)
-#            with continuous Robbins-Monro update of the \log\sigma_t
-#            (Andrieu & Thoms 2008, Eq. 20/22) instead of batch update.
+#  theta_t1: Adaptive Metropolis within Gibbs (Roberts and Rosenthal, 2009)
 #
 # Author: Cleiton Moya de Almeida
 
@@ -33,7 +31,7 @@ library(coda)
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source <- "quadratic_200_1"
+source <- "quadratic_2000_1"
 data <- readRDS(paste("../../cobalebeb2027/data/simulated/", source, ".rds", sep=""))
 y <- data$y
 #y <- as.data.frame(Seatbelts)$DriversKilled
@@ -122,6 +120,7 @@ N <- 10000                 # Number of steps
 burnin <- 1000             # Number of burn-in steps
 ac_ref <- 0.44             # Acceptance ratio target for theta_t1
 varsigma2 <- rep(0.02, Tt) # RWM variance initialization (adaptive algorithm)
+batch_size <- 20           # Batch size to update varsigma2
 
 # Prior hyperparameters
 # theta_01 ~ N(mu_01, sigma2_01)
@@ -203,15 +202,15 @@ for (n in 1:N) {
     # Sample theta_t1 (adaptive random walking Metropolis) and
     #        theta_t2 (cojugated normal)
 
-    # if (n %% batch_size == 1 && n > 1) {
-    #     b <- (n-1)/batch_size
-    #     delta <- min(0.01, 1/sqrt(b))
-    #
-    #     # Mean accepted ratio for each t in the last 50 iterations
-    #     alpha <- Rfast::colmeans(ac_hist[(n-batch_size):(n-1), ])
-    #     c <- exp(2*delta*(2*as.numeric(alpha > ac_ref) - 1))
-    #     varsigma2 <- c*varsigma2
-    # }
+    if (n %% batch_size == 1 && n > 1) {
+        b <- (n-1)/batch_size
+        delta <- min(0.01, 1/sqrt(b))
+
+        # Mean accepted ratio for each t in the last 50 iterations
+        alpha <- Rfast::colmeans(ac_hist[(n-batch_size):(n-1), ])
+        c <- exp(2*delta*(2*as.numeric(alpha > ac_ref) - 1))
+        varsigma2 <- c*varsigma2
+    }
 
 
     for (t in 1:Tt) {
@@ -252,10 +251,6 @@ for (n in 1:N) {
         ac_hist[n,t] <- res$ac # flag: sample accepted(1) or not (0)
     }
 
-    # Adaptive stage of varsigma2
-    delta <- min(0.01, 1/sqrt(n))
-    ls <- log(varsigma2)/2 + delta*(ac_hist[n,] - ac_ref)
-    varsigma2 <- exp(2*ls)
 
     # Store the sampled values
     theta_01_hist[n] <- theta_01
