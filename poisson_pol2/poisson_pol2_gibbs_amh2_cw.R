@@ -12,7 +12,9 @@
 #  1/W2 ~ gamma(shape=nu_02, rate=eta_02)
 #
 # MCMC:
-#  theta_t1: Adaptive Metropolis within Gibbs (Roberts and Rosenthal, 2009)
+#  theta_t1: Adaptive Metropolis within Gibbs (Roberts & Rosenthal, 2009)
+#            with continuous Robbins-Monro update of the \log\sigma_t
+#            (Andrieu & Thoms 2008, Eq. 20/22) instead of batch update.
 #
 # Author: Cleiton Moya de Almeida
 
