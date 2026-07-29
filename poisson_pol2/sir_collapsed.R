@@ -23,7 +23,7 @@ set.seed(40)
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source <- "quadratic_200_1"
+source <- "quadratic_2000_1"
 data <- readRDS(paste("../../cobalebeb2027/data/simulated/", source, ".rds", sep=""))
 y <- data$y
 
@@ -102,7 +102,6 @@ Ch01_factor <- Cholesky(K0, perm = FALSE, LDL = TRUE)
 # log|K0| (constant, precomputed once - used in the exact W2 marginal likelihood)
 log_det_K0 <- 2 * as.numeric(determinant(Ch01_factor, logarithm = TRUE)$modulus)
 
-P1_matrix <- K0
 
 # --- theta2 (EXTENDED, (T+1)-dimensional: theta_02 is node "0") ---
 sub_diag_ext <- rep(-1, Ttp1 - 1)
@@ -487,6 +486,7 @@ theta2_hist <- matrix(0, N, Tt)
 accepted_hist  <- logical(N)
 accepted2_hist <- logical(N)
 itr_irls <- numeric(N)
+ess_is_hist <- numeric(N)
 ess_sir_hist <- numeric(N)
 
 
@@ -645,6 +645,7 @@ for (n in 1:N) {
 
     res_lik <- is_log_lik(irls_cur, y, phi1, theta2, theta_02, M_is_lik)
     log_lik_cur <- res_lik$log_lik
+    ess_is_hist[n] <- res_lik$ess_is
 
     # Store the results
     theta_01_hist[n] <- theta_01

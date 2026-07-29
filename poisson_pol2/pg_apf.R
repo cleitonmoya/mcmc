@@ -20,7 +20,7 @@ options(error = function() traceback(2))  # more informative traceback
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source <- "quadratic_200_1"
+source <- "quadratic_2000_2"
 data <- readRDS(paste("../../cobalebeb2027/data/simulated/", source, ".rds", sep=""))
 y <- data$y
 
@@ -79,7 +79,7 @@ eta_02  <- 0.0001
 # Simulation parameters
 N <- 10000      # number of Gibbs iterations
 K <- 50          # number of particles
-burnin <- 2500
+burnin <- 1000
 
 # Initial Values
 theta1 <- numeric(Tt)
@@ -149,12 +149,17 @@ chan_smoothing_theta2 <- function(theta1, phi1, phi2, mu_02, sigma2_02, theta_01
 }
 
 
-chan_sample_theta2 <- function(build_res) {
-    d <- Matrix::diag(build_res$ch)
-    u <- rnorm(Ttp1)
+chan_sample_from_build <- function(build, Tt) {
+
+    ch <- build$ch
+    theta_hat <- build[[1]] # theta1_hat or theta2_hat, always the first element
+
+    d <- Matrix::diag(ch)
+    u <- rnorm(Tt)
     w <- u / sqrt(d)
-    x <- as.vector(Matrix::solve(build_res$ch, w, system = "Lt"))
-    build_res$theta_hat + x
+    x <- as.vector(Matrix::solve(ch, w, system="Lt"))
+
+    return(theta_hat + x)
 }
 
 # Gibbs sampling
@@ -278,7 +283,7 @@ for (n in 1:N) {
 
     # (theta_02, theta2) jointly via extended block
     build2 <- chan_smoothing_theta2(theta1, phi1, phi2, mu_02, sigma2_02, theta_01)
-    draw2  <- chan_sample_theta2(build2)
+    draw2  <- chan_sample_from_build(build2, Ttp1)
     theta_02 <- draw2[1]
     theta2   <- draw2[-1]
 

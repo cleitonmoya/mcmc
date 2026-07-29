@@ -22,7 +22,7 @@ set.seed(42)
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source <- "quadratic_200_1"
+source <- "quadratic_2000_1"
 data <- readRDS(paste("../../cobalebeb2027/data/simulated/", source, ".rds", sep=""))
 y <- data$y
 
@@ -98,37 +98,6 @@ tol <- 1e-4
 
 start_time = proc.time() # execution time
 
-# Base for the prior Precision Matrix K
-sub_diag_base <- rep(-1, Tt-1)
-main_diag_base <- c(rep(2, Tt-1), 1)
-K0 <- bandSparse(n=Tt, k=c(0, -1),
-                 diagonals=list(main_diag_base, sub_diag_base),
-                 symmetric = TRUE)
-
-# diagonal mask
-# @x: slot of the Sparce matrix (S4 object) that contains the non-zero values
-diag_pattern <- bandSparse(n=Tt, k=c(0, -1),
-                           diagonals=list(rep(TRUE, Tt), rep(FALSE, Tt-1)),
-                           symmetric=TRUE)
-idx_diag <- which(diag_pattern@x) # index of subpattern@x which is non-zero
-
-# subdiagonal mask
-sub_pattern <- bandSparse(n=Tt, k=c(0, -1),
-                          diagonals=list(rep(FALSE, Tt), rep(TRUE, Tt-1)),
-                          symmetric=TRUE)
-idx_sub <- which(sub_pattern@x)
-
-# Initial symbolic Cholesky factor
-Ch01_factor <- Cholesky(K0, perm = FALSE, LDL = TRUE)
-Ch02_factor <- Cholesky(K0, perm = FALSE, LDL = TRUE)
-
-# Work precision matrix (static)
-P1_matrix <- K0
-P2_matrix <- K0
-
-#####
-# FIXED SPARSE STRUCTURES FOR CHAN METHOD ####
-
 # theta2 (EXTENDED, (T+1)-dimensional: theta_02 is node "0")
 Ttp1 <- Tt + 1
 sub_diag_ext <- rep(-1, Ttp1 - 1)
@@ -183,14 +152,6 @@ chan_smoothing_theta2 <- function(theta1, phi1, phi2, mu_02, sigma2_02, theta_01
     list(theta_hat = as.numeric(Matrix::solve(ch, b, system = "A")), ch = ch, z = z)
 }
 
-chan_sample_theta2 <- function(build_res) {
-    d <- Matrix::diag(build_res$ch)
-    u <- rnorm(Ttp1)
-    w <- u / sqrt(d)
-    x <- as.vector(Matrix::solve(build_res$ch, w, system = "Lt"))
-    build_res$theta_hat + x
-}
-
 
 # theta1 | theta2 (fixed), phi1 - EXTENDED, (T+1)-dimensional: theta_01 is
 # node "0", jointly sampled with theta1[1..T] via the same Laplace/IRLS
@@ -215,12 +176,19 @@ chan_smoothing_theta1 <- function(z_t, phi_V, phi1, theta_02, theta2) {
 }
 
 
-chan_sample_theta1 <- function(build_res) {
-    d <- Matrix::diag(build_res$ch)
-    u <- rnorm(Ttp1)
+# Used in: sir_collapsed
+# It can be used with theta1 or theta2
+chan_sample_from_build <- function(build, Tt) {
+
+    ch <- build$ch
+    theta_hat <- build[[1]] # theta1_hat or theta2_hat, always the first element
+
+    d <- Matrix::diag(ch)
+    u <- rnorm(Tt)
     w <- u / sqrt(d)
-    x <- as.vector(Matrix::solve(build_res$ch, w, system="Lt"))
-    build_res$theta1_hat + x
+    x <- as.vector(Matrix::solve(ch, w, system="Lt"))
+
+    return(theta_hat + x)
 }
 
 
@@ -291,7 +259,7 @@ for (n in 1:N) {
         theta_01_trajectories <- numeric(M_is)
         for (i in 1:M_is) {
             # sample (theta_01, theta1) proposed jointly
-            draw_prop <- chan_sample_theta1(res)
+            draw_prop <- chan_sample_from_build(res, Ttp1)
             theta_01_trajectories[i] <- draw_prop[1]
             theta1_prop <- draw_prop[-1]
             trajectories[i, ] <- theta1_prop
@@ -313,7 +281,7 @@ for (n in 1:N) {
         theta_01 <- theta_01_trajectories[idx]
         theta1   <- trajectories[idx, ] # theta1
     } else {
-        draw_prop <- chan_sample_theta1(res)
+        draw_prop <- chan_sample_from_build(res, Ttp1)
         theta_01  <- draw_prop[1]
         theta1    <- draw_prop[-1]
     }
@@ -321,7 +289,7 @@ for (n in 1:N) {
 
     # (theta_02, theta2) jointly via extended block
     build2 <- chan_smoothing_theta2(theta1, phi1, phi2, mu_02, sigma2_02, theta_01)
-    draw2  <- chan_sample_theta2(build2)
+    draw2  <- chan_sample_from_build(build2, Ttp1)
     theta_02 <- draw2[1]
     theta2   <- draw2[-1]
 
