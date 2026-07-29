@@ -18,7 +18,7 @@ library(coda)
 rm(list = ls())
 options(error = function() traceback(2))
 tp <- base::t
-set.seed(40)
+set.seed(42)
 
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
@@ -598,10 +598,14 @@ for (n in 1:N) {
     itr_irls[n] <- irls_cur$itr
     accepted_hist[n] <- mh_res$accepted
 
+    # (theta_01, theta1) jointly (SIR, extended, given accepted phi1)
+    res_sir <- sir_theta1(irls_cur, y, phi1, theta2, theta_02, M_sir_theta1)
+    theta_01     <- res_sir$theta_01
+    theta1_star  <- res_sir$theta1
+    theta1_tilde <- irls_cur$theta1_tilde
+    ess_sir_hist[n] <- res_sir$ess
+
     # Collapsed MH for W2
-    # theta1_star here is still the value from the previous iteration -
-    # (theta_01, theta1)'s SIR step hasn't run yet this sweep, only phi1 is
-    # fresh at this point (matches the reference ordering below).
     res_lik2_cur <- log_marginal_lik_w2(theta1_star, phi1, phi2, theta_02)
     log_lik2_cur <- res_lik2_cur$log_lik
 
@@ -620,24 +624,11 @@ for (n in 1:N) {
     W2 <- 1 / phi2
     accepted2_hist[n] <- mh2_res$accepted
 
-    # (theta_02, theta2) jointly via extended block given accepted phi2.
-    # Sampled BEFORE (theta_01, theta1): theta1's SIR step needs the FRESH
-    # theta2 to keep the phi2-theta1 coupling tight - doing it in the
-    # opposite order (theta1 first) was found to degrade ESS(W2)
-    # substantially (see poisson_pol2_gibbs_sir_collapsed_W1W2-separated.R,
-    # ESS(W2) ~4500 vs ~350).
+    # (theta_02, theta2) jointly via extended block given accepted phi2
     build2 <- chan_smoothing_theta2(theta1_star, phi1, phi2, mu_02, sigma2_02, theta_01)
     draw2  <- chan_sample_theta2(build2)
     theta_02 <- draw2[1]
     theta2   <- draw2[-1]
-
-    # (theta_01, theta1) jointly (SIR, extended, given accepted phi1 and the
-    # fresh theta2)
-    res_sir <- sir_theta1(irls_cur, y, phi1, theta2, theta_02, M_sir_theta1)
-    theta_01     <- res_sir$theta_01
-    theta1_star  <- res_sir$theta1
-    theta1_tilde <- irls_cur$theta1_tilde
-    ess_sir_hist[n] <- res_sir$ess
 
     # Update irls_cur and log_lik_cur for next iteration
     irls_cur <- run_irls(theta1_tilde, theta2, theta_02, phi1, y, tol, M_irls_max)

@@ -48,13 +48,13 @@ if (theta2_present) {
 lambda_true <- exp(theta1_true)
 
 # Load or compile the model
-if (file.exists("poisson_ltdm.rds")) {
-  model <- readRDS("poisson_ltdm.rds")
+if (file.exists("poisson_pol2_nc.rds")) {
+  model <- readRDS("poisson_pol2_nc.rds")
   printf("Model loaded")
 } else {
   printf("Building the model")
-  model <- stan_model(file = "poisson_pol2.stan", model_name = "PoissonLTDM")
-  saveRDS(model, file = "poisson_ltdm.rds")
+  model <- stan_model(file = "poisson_pol2_nc.stan", model_name = "PoissonLTDM")
+  saveRDS(model, file = "poisson_pol2_nc.rds")
 }
 
 
@@ -77,8 +77,8 @@ nu_02 <- 2
 eta_02  <- 0.0001
 
 # Initial values
-theta1 <- numeric(Tt)
-theta2 <- numeric(Tt)
+z1 <- numeric(Tt)   # raw innovations for theta1 (non-centered parameterization)
+z2 <- numeric(Tt)   # raw innovations for theta2 (non-centered parameterization)
 theta_01 <- 0
 theta_02 <- 0
 W1 <- 0.01
@@ -104,8 +104,8 @@ init_list <- list(
   list(
     theta_01 = theta_01,
     theta_02 = theta_02,
-    theta1   = theta1,
-    theta2   = theta2,
+    z1       = z1,
+    z2       = z2,
     phi1     = phi1,
     phi2     = phi2
   )
@@ -122,6 +122,9 @@ fit <- sampling(
     init   = init_list
 )
 
+# HMC diagnostics (divergences, treedepth, E-BFMI) - the whole point of the
+# non-centered reparameterization is to clean these up, so check them
+# explicitly rather than relying only on ESS/Geweke downstream
 printf("HMC diagnostics:")
 check_hmc_diagnostics(fit)
 
@@ -175,6 +178,7 @@ printf("\tW1: %.0f", ess_w1)
 printf("\tW2: %.0f", ess_w2)
 printf("\ttheta1 (mean): %.2f", mean(ess_theta1))
 printf("\ttheta2 (mean): %.2f", mean(ess_theta2))
+
 
 # Effective sample size per second
 printf("Effective Sample Size / second:")
