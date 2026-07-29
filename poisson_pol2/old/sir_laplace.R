@@ -127,6 +127,37 @@ P1_matrix <- K0
 P2_matrix <- K0
 
 #####
+# Chan Method functions
+
+chan_smoothing_theta1 <- function(y, phi_V, phi1, theta_01, theta_02, theta2) {
+    Tt <- length(y)
+    P1_matrix@x[idx_diag] <- (main_diag_base * phi1) + phi_V
+    P1_matrix@x[idx_sub]  <- -phi1
+    Ch1_factor <- update(Ch01_factor, P1_matrix)
+
+    b <- y * phi_V
+    Hb_theta2 <- numeric(Tt)
+    Hb_theta2[1] <- -theta2[1]
+    Hb_theta2[2:(Tt-1)] <- theta2[1:(Tt-2)] - theta2[2:(Tt-1)]
+    Hb_theta2[Tt] <- theta2[Tt-1]
+    b <- b + phi1*Hb_theta2
+    b[1] <- b[1] + phi1*(theta_01 + theta_02)
+
+    theta1_hat <- as.numeric(Matrix::solve(Ch1_factor, b, system="A"))
+    list(theta1_hat=theta1_hat, ch=Ch1_factor)
+}
+
+
+chan_sample_theta1 <- function(build_res) {
+    d <- Matrix::diag(build_res$ch)
+    u <- rnorm(Tt)
+    w <- u / sqrt(d)
+    x <- as.vector(Matrix::solve(build_res$ch, w, system="Lt"))
+    build_res$theta1_hat + x
+}
+
+
+#####
 # FIXED SPARSE STRUCTURES FOR CHAN METHOD ####
 
 # theta2 (EXTENDED, (T+1)-dimensional: theta_02 is node "0")
@@ -150,15 +181,6 @@ idx_sub_e <- which(sub_pattern_e@x)
 
 Ch02_factor <- Cholesky(K0_ext_symbolic, perm = FALSE, LDL = TRUE)
 P2_matrix <- K0_ext_symbolic
-
-# theta1 (EXTENDED, (T+1)-dimensional: theta_01 is node "0"). Same sparsity
-# pattern as theta2's extended structure (both are first-order Gauss-Markov
-# chains of length T+1) - reuses K0_ext_symbolic, but needs its OWN Cholesky
-# object (Cholesky() called again, never assigned/shared) and its own working
-# precision matrix, since P1_matrix/Ch01_factor get updated every Gibbs
-# iteration with different numeric values (phi1, IRLS precisions - not phi2).
-Ch01_factor <- Cholesky(K0_ext_symbolic, perm = FALSE, LDL = TRUE)
-P1_matrix <- K0_ext_symbolic
 
 time1 <- proc.time()
 building_time <- (time1 - start_time)[[1]]
@@ -192,38 +214,6 @@ chan_sample_theta2 <- function(build_res) {
 }
 
 
-# theta1 | theta2 (fixed), phi1 - EXTENDED, (T+1)-dimensional: theta_01 is
-# node "0", jointly sampled with theta1[1..T] via the same Laplace/IRLS
-# approximation (theta_01 needs no linearization itself - it has no
-# likelihood - only its exact Gaussian prior and the exact process link to
-# theta1[1], both already captured by main_diag_rw*phi1 + extra_diag).
-chan_smoothing_theta1 <- function(z_t, phi_V, phi1, theta_02, theta2) {
-    extra_diag <- c(1/sigma2_01, phi_V)
-    P1_matrix@x[idx_diag_e] <- (main_diag_rw * phi1) + extra_diag
-    P1_matrix@x[idx_sub_e]  <- -phi1
-    ch <- update(Ch01_factor, P1_matrix)
-
-    RHS_ext <- c(theta_02, theta2[-Tt])
-    Hb_ext <- numeric(Ttp1)
-    Hb_ext[1] <- -RHS_ext[1]
-    Hb_ext[2:Tt] <- RHS_ext[1:(Tt-1)] - RHS_ext[2:Tt]
-    Hb_ext[Ttp1] <- RHS_ext[Tt]
-    b <- c(mu_01/sigma2_01, phi_V*z_t) + phi1*Hb_ext
-
-    theta1_hat <- as.numeric(Matrix::solve(ch, b, system="A"))
-    list(theta1_hat=theta1_hat, ch=ch)
-}
-
-
-chan_sample_theta1 <- function(build_res) {
-    d <- Matrix::diag(build_res$ch)
-    u <- rnorm(Ttp1)
-    w <- u / sqrt(d)
-    x <- as.vector(Matrix::solve(build_res$ch, w, system="Lt"))
-    build_res$theta1_hat + x
-}
-
-
 #####
 # Gibbs sampling
 
@@ -248,6 +238,12 @@ for (n in 1:N) {
         elapsed_time <- (time - start_time)[[1]]
         printf("Iteration %d / %d | Elapsed CPU time: %.0f s", n, N, elapsed_time)
     }
+
+    # Sample theta_01 (conjugated normal)
+    sigma2_01_bar <- (1 / sigma2_01 + 1 / W1)^(-1)
+    mu_01_bar <- sigma2_01_bar * (mu_01 / sigma2_01 +
+                                      (theta1[1] - theta_02) / W1)
+    theta_01 <- rnorm(1, mean = mu_01_bar, sd = sqrt(sigma2_01_bar))
 
     # Sample phi1 (conjugated gamma)
     dif1 <- theta1- c(theta_01, theta1[-Tt])
@@ -276,8 +272,8 @@ for (n in 1:N) {
             f_t <- exp(-theta1_tilde)         # observational variance
             z_t <- theta1_tilde + f_t*y - 1   # pseudo-observation
 
-            res <- chan_smoothing_theta1(z_t, 1/f_t, phi1, theta_02, theta2)
-            theta1_tilde <- res$theta1_hat[-1]   # drop node 0 (theta_01) for the next linearization point
+            res <- chan_smoothing_theta1(z_t, 1/f_t, phi1, theta_01, theta_02, theta2)
+            theta1_tilde <- res$theta1_hat
 
             if (max(abs(theta1_tilde - theta1_tilde_old)) < tol) break
             theta1_tilde_old <- theta1_tilde
@@ -288,17 +284,12 @@ for (n in 1:N) {
     if (M_is > 1) {
         log_w <- numeric(M_is)
         trajectories <- matrix(0, M_is, Tt)
-        theta_01_trajectories <- numeric(M_is)
         for (i in 1:M_is) {
-            # sample (theta_01, theta1) proposed jointly
-            draw_prop <- chan_sample_theta1(res)
-            theta_01_trajectories[i] <- draw_prop[1]
-            theta1_prop <- draw_prop[-1]
+            # sample theta1 proposed
+            theta1_prop  <- chan_sample_theta1(res)
             trajectories[i, ] <- theta1_prop
 
             # Log-weights: log p(y|theta1) - log g(y|theta1)
-            # (theta_01's prior/process terms cancel exactly between target
-            # and proposal, so the weight formula does not change)
             log_p <- sum(y * theta1_prop - exp(theta1_prop))
             log_g <- sum(-0.5 * log(2*pi*f_t) - 0.5 * (theta1_prop - z_t)^2 / f_t)
             log_w[i] <- log_p - log_g
@@ -309,13 +300,10 @@ for (n in 1:N) {
         Weights[n, ] <- w
         ess_is[n] <- 1 / sum(exp(2*log_w))
 
-        idx <- sample(1:M_is, 1, prob=w)   # index for (theta_01*, theta1*)
-        theta_01 <- theta_01_trajectories[idx]
-        theta1   <- trajectories[idx, ] # theta1
+        idx <- sample(1:M_is, 1, prob=w)   # index for theta1*
+        theta1 <- trajectories[idx, ] # theta1
     } else {
-        draw_prop <- chan_sample_theta1(res)
-        theta_01  <- draw_prop[1]
-        theta1    <- draw_prop[-1]
+        theta1  <- chan_sample_theta1(res)
     }
 
 

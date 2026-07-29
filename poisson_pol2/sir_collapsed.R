@@ -1,7 +1,11 @@
 # Poisson - 2nd Order Polynomial Dynamic Model
 # Gibbs with Collapsed Samplers for W1 AND W2
 #
-# theta_01/theta1: simple sampling (conjugate Normal + SIR, T-dimensional)
+# theta_01/theta1: EXTENDED-state joint block ((T+1)-dimensional), sampled
+#                  together via chan_smoothing_theta1/chan_sample_theta1 -
+#                  still needs SIR (the Poisson likelihood on theta1[1..T]
+#                  makes it only a Laplace/IRLS approximation; theta_01
+#                  itself needs no approximation, no likelihood on it).
 # theta_02/theta2: EXTENDED-state joint block ((T+1)-dimensional), sampled
 #                  together via chan_smoothing_theta2/chan_sample_theta2 -
 #                  exact, no SIR needed (no Poisson likelihood involved).
@@ -55,18 +59,17 @@ logsumexp <- function(x) {
 #####
 # Static sparse matrices for the Chan Method
 #
-# theta1 uses a T-dimensional structure (theta_01 is sampled separately,
-# via simple conjugate Normal, and enters theta1's system only as a fixed
-# offset - see chan_smoothing_theta1).
-#
-# theta2 uses a (T+1)-dimensional EXTENDED structure: theta_02 is folded in
-# as node "0" of the chain (its own N(mu_02, sigma2_02) prior), so
-# (theta_02, theta2[1:T]) are sampled JOINTLY in one block. This breaks the
-# slow-mixing correlation between theta_02 and theta2[1] that a separate
-# conjugate-Normal + block-sampler alternation would have (the same
-# centered-parameterization pathology theta_01/theta1 has, but there is no
-# Poisson likelihood involved for theta2, so this joint block is exact -
-# no SIR/importance sampling needed, unlike theta1).
+# theta1 AND theta2 both use (T+1)-dimensional EXTENDED structures: theta_01
+# (resp. theta_02) is folded in as node "0" of the chain (its own Normal
+# prior), so (theta_01, theta1) and (theta_02, theta2[1:T]) are each sampled
+# JOINTLY in one block. This breaks the slow-mixing centered-parameterization
+# correlation between node "0" and node "1" that a separate conjugate-Normal
+# + block-sampler alternation would have. For theta2 this joint block is
+# EXACT (no Poisson likelihood involved). For theta1 it is still only a
+# Laplace/IRLS approximation (theta1[1..T] carries the Poisson likelihood),
+# so it still needs SIR/importance sampling on top - see run_irls/is_log_lik/
+# sir_theta1 - theta_01 itself needs no linearization (no likelihood), only
+# its exact Gaussian prior and its exact process link into theta1[1].
 #
 # The pure random-walk skeleton on T+1 nodes (main_diag_rw below) is
 # singular on its own (a RW with no anchor has a free translation
@@ -122,6 +125,18 @@ idx_sub_e <- which(sub_pattern_e@x)
 Ch02_factor <- Cholesky(K0_ext_symbolic, perm = FALSE, LDL = TRUE)
 P2_matrix <- K0_ext_symbolic
 
+# --- theta1 (EXTENDED, (T+1)-dimensional: theta_01 is node "0") ---
+# Same sparsity pattern as theta2's extended structure (both are first-order
+# Gauss-Markov chains of length T+1) - reuses K0_ext_symbolic, but needs its
+# OWN Cholesky object (Cholesky() called again, never assigned/shared) and
+# its own working precision matrix, since P1_matrix/Ch01_factor get updated
+# every Gibbs iteration with different numeric values (phi1, IRLS precisions
+# - not phi2). This reassigns the T-dimensional Ch01_factor/P1_matrix above;
+# log_det_K0 was already computed from the original values, so it is
+# unaffected.
+Ch01_factor <- Cholesky(K0_ext_symbolic, perm = FALSE, LDL = TRUE)
+P1_matrix <- K0_ext_symbolic
+
 # --- dedicated T-dimensional structure for the W2 integrated likelihood ---
 # log_marginal_lik_w2 needs theta_02 held FIXED (not jointly marginalized) -
 # a mathematically distinct computation from sampling (theta_02, theta2),
@@ -137,29 +152,33 @@ printf("Sparse structures building: %.4f s", building_time)
 #####
 # Chan Method functions
 
-# theta1 | theta_01 (fixed), theta2 (fixed), phi1 - T-dimensional
-chan_smoothing_theta1 <- function(y, phi_V, phi1, theta_01, theta_02, theta2) {
-    Tt <- length(y)
-    P1_matrix@x[idx_diag] <- (main_diag_base * phi1) + phi_V
-    P1_matrix@x[idx_sub]  <- -phi1
-    Ch1_factor <- update(Ch01_factor, P1_matrix)
+# theta1 | theta2 (fixed), phi1 - EXTENDED, (T+1)-dimensional: theta_01 is
+# node "0", jointly sampled with theta1[1..T]. theta_01 needs no
+# linearization itself (no likelihood) - only its exact Gaussian prior and
+# the exact process link to theta1[1], both already captured by
+# main_diag_rw*phi1 + extra_diag (no extra "+phi1" term at node 0, unlike
+# theta_02, since theta_01 has no external channel into another block).
+chan_smoothing_theta1 <- function(z_t, phi_V, phi1, theta_02, theta2) {
+    extra_diag <- c(1/sigma2_01, phi_V)
+    P1_matrix@x[idx_diag_e] <- (main_diag_rw * phi1) + extra_diag
+    P1_matrix@x[idx_sub_e]  <- -phi1
+    ch <- update(Ch01_factor, P1_matrix)
 
-    b <- y * phi_V
-    Hb_theta2 <- numeric(Tt)
-    Hb_theta2[1] <- -theta2[1]
-    Hb_theta2[2:(Tt-1)] <- theta2[1:(Tt-2)] - theta2[2:(Tt-1)]
-    Hb_theta2[Tt] <- theta2[Tt-1]
-    b <- b + phi1*Hb_theta2
-    b[1] <- b[1] + phi1*(theta_01 + theta_02)
+    RHS_ext <- c(theta_02, theta2[-Tt])
+    Hb_ext <- numeric(Ttp1)
+    Hb_ext[1] <- -RHS_ext[1]
+    Hb_ext[2:Tt] <- RHS_ext[1:(Tt-1)] - RHS_ext[2:Tt]
+    Hb_ext[Ttp1] <- RHS_ext[Tt]
+    b <- c(mu_01/sigma2_01, phi_V*z_t) + phi1*Hb_ext
 
-    theta1_hat <- as.numeric(Matrix::solve(Ch1_factor, b, system="A"))
-    list(theta1_hat=theta1_hat, ch=Ch1_factor)
+    theta1_hat <- as.numeric(Matrix::solve(ch, b, system="A"))
+    list(theta1_hat=theta1_hat, ch=ch)
 }
 
 
 chan_sample_theta1 <- function(build_res) {
     d <- Matrix::diag(build_res$ch)
-    u <- rnorm(Tt)
+    u <- rnorm(Ttp1)
     w <- u / sqrt(d)
     x <- as.vector(Matrix::solve(build_res$ch, w, system="Lt"))
     build_res$theta1_hat + x
@@ -167,15 +186,15 @@ chan_sample_theta1 <- function(build_res) {
 
 
 # IRLS: build Laplace approximation around theta1_tilde (T-dimensional)
-run_irls <- function(theta1_tilde, theta2, theta_01, theta_02, phi1,
+run_irls <- function(theta1_tilde, theta2, theta_02, phi1,
                      y, tol, M_irls_max) {
     for (j in 1:M_irls_max) {
         f_t   <- exp(-theta1_tilde)
         phi_V <- 1 / f_t
         z_t   <- theta1_tilde + f_t * y - 1   # Poisson pseudo-observation
 
-        res <- chan_smoothing_theta1(z_t, phi_V, phi1, theta_01, theta_02, theta2)
-        theta1_tilde_new <- res$theta1_hat
+        res <- chan_smoothing_theta1(z_t, phi_V, phi1, theta_02, theta2)
+        theta1_tilde_new <- res$theta1_hat[-1]   # drop node 0 (theta_01)
         if (any(!is.finite(theta1_tilde_new))) break
 
         if (max(abs(theta1_tilde_new - theta1_tilde)) < tol) {
@@ -190,10 +209,14 @@ run_irls <- function(theta1_tilde, theta2, theta_01, theta_02, phi1,
 
 
 # ---------------------------------------------------------------------------
-# IS estimator of log p(y | phi1, theta2)  [integrated over theta1]
-# Approximate: the Poisson likelihood makes p(theta1|y,phi1,theta2) non-Gaussian.
+# IS estimator of log p(y | phi1, theta2)  [integrated over (theta_01, theta1)
+# JOINTLY]. Approximate: the Poisson likelihood makes p(theta1|y,phi1,theta2)
+# non-Gaussian. theta_01 itself needs no approximation (no likelihood), but
+# once the proposal q integrates it jointly (via the extended block), the
+# target here must integrate it jointly too - holding it fixed would break
+# the target/proposal cancellation, not just lose efficiency.
 # ---------------------------------------------------------------------------
-is_log_lik <- function(irls_res, y, phi1, theta2, theta_01, theta_02, M_is_lik) {
+is_log_lik <- function(irls_res, y, phi1, theta2, theta_02, M_is_lik) {
     res     <- irls_res$res
     eta_hat <- res$theta1_hat
     ch      <- res$ch
@@ -201,25 +224,28 @@ is_log_lik <- function(irls_res, y, phi1, theta2, theta_01, theta_02, M_is_lik) 
 
     log_det_H <- 2 * as.numeric(determinant(ch, logarithm = TRUE)$modulus)
     th_lag2_fixed <- c(theta_02, theta2[-Tt])
-    log_norm_H <- -Tt / 2 * log(2 * pi) + 0.5 * log_det_H
+    log_norm_H <- -Ttp1 / 2 * log(2 * pi) + 0.5 * log_det_H
 
     log_w <- numeric(M_is_lik)
-    u_mat <- matrix(rnorm(M_is_lik * Tt), nrow = M_is_lik)
+    u_mat <- matrix(rnorm(M_is_lik * Ttp1), nrow = M_is_lik)
     d_ch  <- Matrix::diag(ch)
 
     for (i in 1:M_is_lik) {
         u <- u_mat[i, ]
         w <- u / sqrt(d_ch)
         x <- as.vector(solve(ch, w, system = "Lt"))
-        th <- eta_hat + x
+        draw_i <- eta_hat + x
+        theta_01_i <- draw_i[1]
+        th         <- draw_i[-1]
 
         log_py <- sum(y * th - exp(th))
-        th_lag1 <- c(theta_01, th[-Tt])
+        log_prior_01 <- -0.5 * log(2 * pi * sigma2_01) - (theta_01_i - mu_01)^2 / (2 * sigma2_01)
+        th_lag1 <- c(theta_01_i, th[-Tt])
         eps     <- th - th_lag1 - th_lag2_fixed
         log_prior_th <- -Tt / 2 * log(2 * pi * W1) - sum(eps^2) / (2 * W1)
         log_q <- log_norm_H - 0.5 * sum(u^2)
 
-        log_w[i] <- log_py + log_prior_th - log_q
+        log_w[i] <- log_py + log_prior_01 + log_prior_th - log_q
     }
 
     log_lik <- logsumexp(log_w) - log(M_is_lik)
@@ -230,42 +256,45 @@ is_log_lik <- function(irls_res, y, phi1, theta2, theta_01, theta_02, M_is_lik) 
 }
 
 
-# SIR for theta1 (T-dimensional; corrects the Laplace/IRLS Gaussian
-# approximation via importance resampling)
-sir_theta1 <- function(irls_res, y, phi1, theta2, theta_01, theta_02, M_sir_theta1) {
+# SIR for (theta_01, theta1) JOINTLY (T+1-dimensional; corrects the
+# Laplace/IRLS Gaussian approximation via importance resampling)
+sir_theta1 <- function(irls_res, y, phi1, theta2, theta_02, M_sir_theta1) {
     eta_hat <- irls_res$res$theta1_hat
     ch      <- irls_res$res$ch
     W1 <- 1/phi1
 
     log_det_H     <- 2 * as.numeric(determinant(ch, logarithm = TRUE)$modulus)
     th_lag2_fixed <- c(theta_02, theta2[-Tt])
-    log_norm_H    <- -Tt / 2 * log(2 * pi) + 0.5 * log_det_H
+    log_norm_H    <- -Ttp1 / 2 * log(2 * pi) + 0.5 * log_det_H
 
     log_w  <- numeric(M_sir_theta1)
-    draws  <- matrix(0, M_sir_theta1, Tt)
+    draws  <- matrix(0, M_sir_theta1, Ttp1)
     d_ch   <- Matrix::diag(ch)
 
     for (i in 1:M_sir_theta1) {
-        u  <- rnorm(Tt)
+        u  <- rnorm(Ttp1)
         w <- u / sqrt(d_ch)
         x  <- as.vector(Matrix::solve(ch, w, system = "Lt"))
-        th <- eta_hat + x
-        draws[i, ] <- th
+        draw_i <- eta_hat + x
+        draws[i, ] <- draw_i
+        theta_01_i <- draw_i[1]
+        th         <- draw_i[-1]
 
         log_py       <- sum(y * th - exp(th))
-        th_lag1      <- c(theta_01, th[-Tt])
+        log_prior_01 <- -0.5 * log(2 * pi * sigma2_01) - (theta_01_i - mu_01)^2 / (2 * sigma2_01)
+        th_lag1      <- c(theta_01_i, th[-Tt])
         eps          <- th - th_lag1 - th_lag2_fixed
         log_prior_th <- -Tt / 2 * log(2 * pi * W1) - sum(eps^2) / (2 * W1)
         log_q        <- log_norm_H - 0.5 * sum(u^2)
 
-        log_w[i] <- log_py + log_prior_th - log_q
+        log_w[i] <- log_py + log_prior_01 + log_prior_th - log_q
     }
 
     w_norm  <- exp(log_w - logsumexp(log_w))
     ess_sir <- 1 / sum(w_norm^2)
     idx     <- sample.int(M_sir_theta1, size = 1, prob = w_norm)
 
-    list(theta1 = draws[idx, ], ess = ess_sir)
+    list(theta_01 = draws[idx, 1], theta1 = draws[idx, -1], ess = ess_sir)
 }
 
 
@@ -364,14 +393,14 @@ calibrate_ce_gamma <- function(samples) {
 
 mh_w1_collapsed <- function(phi1_cur, log_lik_cur, irls_cur,
                             ce_params, nu_01, eta_01,
-                            theta2, theta_01, theta_02,
+                            theta2, theta_02,
                             theta1_tilde, y, tol, M_irls_max, M_is_lik) {
 
     phi1_prop <- rgamma(1, shape = ce_params$shape, rate = ce_params$rate)
 
-    irls_prop    <- run_irls(theta1_tilde, theta2, theta_01, theta_02,
+    irls_prop    <- run_irls(theta1_tilde, theta2, theta_02,
                              phi1_prop, y, tol, M_irls_max)
-    res_lik_prop <- is_log_lik(irls_prop, y, phi1_prop, theta2, theta_01, theta_02, M_is_lik)
+    res_lik_prop <- is_log_lik(irls_prop, y, phi1_prop, theta2, theta_02, M_is_lik)
     log_lik_prop <- res_lik_prop$log_lik
 
     log_prior <- function(phi) dgamma(phi, shape = nu_01, rate = eta_01, log = TRUE)
@@ -485,15 +514,11 @@ for (r in 1:R_prerun) {
     W2 <- 1/phi2
     phi2_prerun[r] <- phi2
 
-    # theta_01 (simple conjugate Normal)
-    sigma2_01_bar <- (1 / sigma2_01 + 1 / W1)^(-1)
-    mu_01_bar <- sigma2_01_bar * (mu_01 / sigma2_01 + (theta1_star[1] - theta_02) / W1)
-    theta_01 <- rnorm(1, mean = mu_01_bar, sd = sqrt(sigma2_01_bar))
-
-    # theta1 (simple SIR, T-dim)
-    irls_out <- run_irls(theta1_tilde, theta2, theta_01, theta_02, phi1, y, tol, M_irls_max)
+    # (theta_01, theta1) jointly (SIR, extended)
+    irls_out <- run_irls(theta1_tilde, theta2, theta_02, phi1, y, tol, M_irls_max)
     theta1_tilde <- irls_out$theta1_tilde
-    res_sir <- sir_theta1(irls_out, y, phi1, theta2, theta_01, theta_02, M_sir_theta1)
+    res_sir <- sir_theta1(irls_out, y, phi1, theta2, theta_02, M_sir_theta1)
+    theta_01    <- res_sir$theta_01
     theta1_star <- res_sir$theta1
 
     # (theta_02, theta2) jointly via extended block
@@ -527,10 +552,10 @@ printf("CE Gamma proposal for phi2: shape = %.4f, rate = %.4f (mean phi2 = %.6f,
 #####
 # Gibbs Loop
 
-irls_cur <- run_irls(theta1_tilde, theta2, theta_01, theta_02, phi1, y, tol, M_irls_max)
+irls_cur <- run_irls(theta1_tilde, theta2, theta_02, phi1, y, tol, M_irls_max)
 theta1_tilde <- irls_cur$theta1_tilde
 
-res_lik <- is_log_lik(irls_cur, y, phi1, theta2, theta_01, theta_02, M_is_lik)
+res_lik <- is_log_lik(irls_cur, y, phi1, theta2, theta_02, M_is_lik)
 log_lik_cur <- res_lik$log_lik
 
 res_lik2 <- log_marginal_lik_w2(theta1_star, phi1, phi2, theta_02)
@@ -549,11 +574,6 @@ for (n in 1:N) {
                n, N, elapsed, acc_rate, acc_rate2)
     }
 
-    # theta_01 (simple conjugate Normal)
-    sigma2_01_bar <- (1 / sigma2_01 + 1 / W1)^(-1)
-    mu_01_bar <- sigma2_01_bar * (mu_01 / sigma2_01 + (theta1_star[1] - theta_02) / W1)
-    theta_01 <- rnorm(1, mean = mu_01_bar, sd = sqrt(sigma2_01_bar))
-
     # Collapsed MH for W1
     mh_res <- mh_w1_collapsed(
         phi1_cur     = phi1,
@@ -563,7 +583,6 @@ for (n in 1:N) {
         nu_01        = nu_01,
         eta_01       = eta_01,
         theta2       = theta2,
-        theta_01     = theta_01,
         theta_02     = theta_02,
         theta1_tilde = theta1_tilde,
         y            = y,
@@ -579,9 +598,10 @@ for (n in 1:N) {
     itr_irls[n] <- irls_cur$itr
     accepted_hist[n] <- mh_res$accepted
 
-    # theta1 (simple SIR, T-dim, given accepted phi1)
-    res_sir <- sir_theta1(irls_cur, y, phi1, theta2, theta_01, theta_02, M_sir_theta1)
-    theta1_star <- res_sir$theta1
+    # (theta_01, theta1) jointly (SIR, extended, given accepted phi1)
+    res_sir <- sir_theta1(irls_cur, y, phi1, theta2, theta_02, M_sir_theta1)
+    theta_01     <- res_sir$theta_01
+    theta1_star  <- res_sir$theta1
     theta1_tilde <- irls_cur$theta1_tilde
     ess_sir_hist[n] <- res_sir$ess
 
@@ -611,10 +631,10 @@ for (n in 1:N) {
     theta2   <- draw2[-1]
 
     # Update irls_cur and log_lik_cur for next iteration
-    irls_cur <- run_irls(theta1_tilde, theta2, theta_01, theta_02, phi1, y, tol, M_irls_max)
+    irls_cur <- run_irls(theta1_tilde, theta2, theta_02, phi1, y, tol, M_irls_max)
     theta1_tilde <- irls_cur$theta1_tilde
 
-    res_lik <- is_log_lik(irls_cur, y, phi1, theta2, theta_01, theta_02, M_is_lik)
+    res_lik <- is_log_lik(irls_cur, y, phi1, theta2, theta_02, M_is_lik)
     log_lik_cur <- res_lik$log_lik
 
     # Store the results
@@ -651,22 +671,22 @@ printf("W2 median: %.5f", median(W2_hist[-(1:burnin)]))
 loglik <- sum(dpois(y, lambda_mean, log=TRUE))
 printf("Log-likelihood: %.2f", loglik)
 
-printf("Effective Sample Size:")
+# Effective sample size
 ess_theta01 <- effectiveSize(mcmc(theta_01_hist[-(1:burnin)]))
 ess_theta02 <- effectiveSize(mcmc(theta_02_hist[-(1:burnin)]))
-printf("\ttheta_01: %.2f", ess_theta01)
-printf("\ttheta_02: %.2f", ess_theta02)
-
 ess_w1 <- effectiveSize(mcmc(W1_hist[-(1:burnin)]))
 ess_w2 <- effectiveSize(mcmc(W2_hist[-(1:burnin)]))
-printf("\tW1: %.0f", ess_w1)
-printf("\tW2: %.0f", ess_w2)
-
-
 ess_theta1 <- effectiveSize(mcmc(theta1_hist[-(1:burnin),]))
 ess_theta2 <- effectiveSize(mcmc(theta2_hist[-(1:burnin),]))
+printf("Effective Sample Size:")
+printf("\ttheta_01: %.2f", ess_theta01)
+printf("\ttheta_02: %.2f", ess_theta02)
+printf("\tW1: %.0f", ess_w1)
+printf("\tW2: %.0f", ess_w2)
 printf("\ttheta1 (mean): %.2f", mean(ess_theta1))
+printf("\ttheta_11 %.2f", ess_theta1[1])
 printf("\ttheta2 (mean): %.2f", mean(ess_theta2))
+
 
 printf("Effective Sample Size / second:")
 printf("\tW1: %.2f", ess_w1/elapsed_time)
@@ -688,3 +708,199 @@ z1_out <- sum((z_theta1 < -1.96) | (z_theta1 > 1.96))/Tt
 z2_out <- sum((z_theta2 < -1.96) | (z_theta2 > 1.96))/Tt
 printf("\tPercent of theta1 out: %.3f", z1_out)
 printf("\tPercent of theta2 out: %.3f", z2_out)
+
+
+#####
+# Plots
+# y, lambda_true, lambda_estimated
+x <- 1:Tt
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8)
+plot(x, y, type="l", xlab="t", ylab="", col="gray",
+     main="Poisson Local Trend Polynomial Model")
+points(x, y, pch = 20)
+lines(x, lambda_mean, col="red", lwd=2)
+if (theta1_present) {
+    lines(x, lambda_true, col="blue", lwd=2)
+    legend("topright",
+           legend = expression(y[t], lambda[t], hat(lambda)[t]),
+           col = c("black", "blue", "red"),
+           lty = c(NA, 1, 1),
+           lwd = c(NA, 2, 2),
+           pch = c(20, NA, NA),
+           bty = "n")
+} else {
+    legend("topright",
+           legend = expression(y[t], hat(lambda)[t]),
+           col = c("black", "red"),
+           lty = c(NA, 1),
+           lwd = c(NA, 2),
+           pch = c(20, NA),
+           bty = "n")
+}
+
+
+# theta1_true, theta1_mean
+x <- 1:Tt
+par(mfrow=c(1,1), mar=c(4,4,2,2), cex=0.8)
+if (theta1_present) {
+    ylim_range <- range(theta1_mean, theta1_true)
+} else {
+    ylim_range <- range(theta1_mean)
+}
+plot(x, theta1_mean, type="l", col="red", lwd=2, ylim=ylim_range,
+     xlab="t", ylab="", main="theta_t1")
+if (theta1_present) {
+    lines(x, theta1_true, col="blue", lwd=2)
+    legend("topright", legend=expression(hat(theta)[t1], theta[t1]),
+           col=c("red","blue"), lwd=2, bty="n")
+} else {
+    legend("topright", legend=expression(hat(theta)[t1]),
+           col="red", lwd=2, bty="n")
+}
+
+
+# theta2_true, theta2_mean
+par(mfrow=c(1,1), mar=c(4,4,2,2), cex=0.8)
+if (theta2_present) {
+    ylim_range <- range(theta2_mean, theta2_true)
+} else {
+    ylim_range <- range(theta2_mean)
+}
+plot(x, theta2_mean, type="l", col="red", lwd=2, ylim=ylim_range,
+     xlab="t", ylab="", main="theta_t2")
+if (theta2_present) {
+    lines(x, theta2_true, col="blue", lwd=2)
+    legend("topright", legend=expression(hat(theta)[t2], theta[t2]),
+           col=c("red","blue"), lwd=2, bty="n")
+} else {
+    legend("topright", legend=expression(hat(theta)[t2]),
+           col="red", lwd=2, bty="n")
+}
+
+
+# Posterior distribution of theta_t1
+par(mfrow = c(2, 2))
+for (t in t_obs) {
+    hist(theta1_hist[-(1:burnin), t], breaks = 50, freq = FALSE,
+         xlab = bquote(theta[.(t) * "," * 1]),
+         main = bquote("Posterior of " * theta[.(t) * "," * 1]))
+    lines(density(theta1_hist[-(1:burnin), t]), col = "blue", lwd = 2)
+}
+
+
+# Posterior distribution of theta_t2
+par(mfrow = c(2, 2))
+for (t in t_obs) {
+    hist(theta2_hist[-(1:burnin), t], breaks = 50, freq = FALSE,
+         xlab = bquote(theta[.(t) * "," * 2]),
+         main = bquote("Posterior of " * theta[.(t) * "," * 2]))
+    lines(density(theta2_hist[-(1:burnin), t]), col = "blue", lwd = 2)
+}
+
+
+# Posterior distribution of W1
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
+hist(W1_hist[-(1:burnin)], breaks = 50, freq = FALSE, main ="Posterior of W1")
+lines(density(W1_hist[-(1:burnin)]), col = "blue", lwd = 2)
+
+
+# Posterior distribution of W2
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
+hist(W2_hist[-(1:burnin)], breaks = 50, freq = FALSE, main ="Posterior of W2")
+lines(density(W2_hist[-(1:burnin)]), col = "blue", lwd = 2)
+
+
+# Traceplot for W1 and W2
+par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex = 0.8)
+plot(W1_hist[-(1:burnin)], type="l", xlab="n", ylab="W", main="Traceplot of W1")
+abline(v=burnin, col="red")
+plot(W2_hist[-(1:burnin)], type="l", xlab="n", ylab="W", main="Traceplot of W2")
+abline(v=burnin, col="red")
+
+
+# Traceplot for theta_01 ####
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
+plot(theta_01_hist, type="l", main="Traceplot of theta01", xlab="", ylab="")
+
+# Traceplot for theta_02 ####
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
+plot(theta_02_hist, type="l", main="Traceplot of theta01", xlab="", ylab="")
+
+
+# Traceplots for theta_t1
+par(mfrow = c(2, 2))
+for (t in t_obs) {
+    plot(theta1_hist[, t], type="l", main=bquote(theta[.(t)*","*1]), xlab="", ylab="")
+    abline(v=burnin, col="red")
+}
+
+
+# Traceplots for theta_t2
+par(mfrow = c(2, 2))
+for (t in t_obs) {
+    plot(theta2_hist[, t], type="l", main=bquote(theta[.(t)*","*2]), xlab="", ylab="")
+    abline(v=burnin, col="red")
+}
+
+
+# Effective sample size ####
+par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex=0.8)
+plot(ess_theta1, type="l", main=expression("Effective sample of " * theta[t1]), xlab="t")
+plot(ess_theta2, type="l", main=expression("Effective sample of " * theta[t2]), xlab="t")
+
+
+# Geweke diagnostic ####
+par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex=0.8)
+plot(z_theta1, type="l", main=expression("Geweke diagnostic for " * theta[t1]),
+     xlab="t", ylab="Z score")
+abline(h=c(-1.96, 1.96), col="red")
+
+plot(z_theta2, type="l", main=expression("Geweke diagnostic for " * theta[t2]),
+     xlab="t", ylab="Z score")
+abline(h=c(-1.96, 1.96), col="red")
+
+
+# ACF for theta1 e theta2 ####
+par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex=0.8)
+for (t in t_obs) {
+    acf(theta1_hist[-(1:burnin), t], main=bquote(theta[.(t)*","*1]))
+    acf(theta2_hist[-(1:burnin), t], main=bquote(theta[.(t)*","*2]))
+}
+
+
+# Prior vs posterior for phi1 and phi2 (comparing against the CE proposals)
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8)
+curve(dgamma(x, shape=nu_01, rate=eta_01), from=1e-6, to=max(1/W1_hist[-(1:burnin)]),
+      main="phi1 prior vs. posterior", col="red", lwd=2)
+lines(density(1/W1_hist[-(1:burnin)]), col="blue", lwd=2)
+legend("topright", legend=c("Prior","Posterior"), col=c("red","blue"), lwd=2)
+
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex=0.8)
+curve(dgamma(x, shape=nu_02, rate=eta_02), from=1e-6, to=max(1/W2_hist[-(1:burnin)]),
+      main="phi2 prior vs. posterior", col="red", lwd=2)
+lines(density(1/W2_hist[-(1:burnin)]), col="blue", lwd=2)
+legend("topright", legend=c("Prior","Posterior"), col=c("red","blue"), lwd=2)
+
+
+# Effective Sample Size - IS of W1's Integrated Likelihood
+par(mfrow=c(1,1), mar=c(4,4,2,2), cex=0.8)
+plot(ess_is_hist, type="l", main="ESS - IS Integrated Likelihood (W1)", xlab="n")
+
+
+# Effective Sample Size - SIR of theta1
+par(mfrow=c(1,1), mar=c(4,4,2,2), cex=0.8)
+plot(ess_sir_hist, type="l", main="ESS - SIR theta1", xlab="n")
+
+
+# W1 and W2 acceptance rate over time (rolling window)
+roll_mean <- function(x, k) {
+    n <- length(x)
+    out <- rep(NA, n)
+    for (i in k:n) out[i] <- mean(x[(i-k+1):i])
+    out
+}
+par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex=0.8)
+plot(roll_mean(as.numeric(accepted_hist), 200), type="l",
+     main="W1 rolling acceptance rate (window=200)", xlab="n", ylab="rate")
+plot(roll_mean(as.numeric(accepted2_hist), 200), type="l",
+     main="W2 rolling acceptance rate (window=200)", xlab="n", ylab="rate")

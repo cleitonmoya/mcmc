@@ -167,6 +167,12 @@ for (n in 1:N) {
         printf("Iteration %d / %d | Elapsed CPU time: %.0f s", n, N, elapsed_time)
     }
 
+    # Sample theta_01
+    sigma2_01_bar <- (1 / sigma2_01 + 1 / W1)^(-1)
+    mu_01_bar <- sigma2_01_bar *
+        (mu_01 / sigma2_01 + (theta1[1] - theta_02) / W1)
+    theta_01 <- rnorm(1, mean = mu_01_bar, sd = sqrt(sigma2_01_bar))
+
     # Sample W1
     dif1   <- theta1 - c(theta_01, theta1[-Tt])
     diffs1 <- dif1 - c(theta_02, theta2[-Tt])
@@ -191,29 +197,11 @@ for (n in 1:N) {
     theta_1_k   <- matrix(0, Tt, K)
     log_w_tilde <- matrix(0, Tt, K)
 
-    # t = 0
-    theta_0_k <- rnorm(K, mean = mu_01, sd = sqrt(sigma2_01))
-    theta_0_k[K] <- theta_01   # reference path
-    log_w_tilde_0 <- rep(-log(K), K)  # no likelihood at t = 0 (uniform weights)
-
     # t = 1
-    # Predictor (auxiliary variable)
-    theta_hat_11_k <- theta_0_k + theta_02
-
-    # Auxiliary weights
-    log_lambda_1_k <- y[1] * theta_hat_11_k - exp(theta_hat_11_k)
-
-    # First stage resampling
-    log_aux_1 <- log_w_tilde_0 + log_lambda_1_k
-    A_1 <- sample(1:K, K, replace = TRUE, prob = exp(log_aux_1 - max(log_aux_1)))
-    A_1[K] <- K   # reference path
-
-    # Propagation
-    theta_1_k[1, ] <- rnorm(K, mean = theta_0_k[A_1] + theta_02, sd = sd_W1)
+    theta_1_k[1, ] <- rnorm(K, mean = theta_01 + theta_02, sd = sd_W1)
     theta_1_k[1, K] <- theta1[1]
 
-    # Updated weights
-    log_w_1 <- log_p_yt(y[1], theta_1_k[1, ]) - log_lambda_1_k[A_1]
+    log_w_1 <- log_p_yt(y[1], theta_1_k[1, ])
     log_w_tilde[1, ] <- log_w_1 - logsumexp(log_w_1) # normalizing
 
     # t = 2, ..., T
@@ -260,20 +248,6 @@ for (n in 1:N) {
         b  <- sample(1:K, 1, prob = bw)
         theta1[t] <- theta_1_k[t, b]
     }
-
-    # backward sampling for theta_01
-    # Backward weights: w_0^k * N(theta1[1] | theta_0^k + theta_02, W1)
-    log_bw_0 <- log_w_tilde_0 +
-        dnorm(theta1[1],
-            mean = theta_0_k + theta_02,
-            sd = sd_W1,
-            log = TRUE
-        )
-    log_bw_0 <- log_bw_0 - max(log_bw_0)
-    bw_0 <- exp(log_bw_0)
-    bw_0 <- bw_0 / sum(bw_0)
-    b_0  <- sample(1:K, 1, prob = bw_0)
-    theta_01 <- theta_0_k[b_0]
 
 
     # (theta_02, theta2) jointly via extended block
