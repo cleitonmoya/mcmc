@@ -34,13 +34,16 @@ set.seed(42)
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
 # Load the data
-source_file <- "poisson_pol2_200"
-data <- readRDS(paste("../data/", source_file, ".rds", sep = ""))
+source <- "quadratic_200_1"
+data <- readRDS(paste("../../cobalebeb2027/data/simulated/", source, ".rds", sep=""))
 y <- data$y
 
-Tt <- length(y)
+Tt <- length(y) # dimension T
 if (Tt == 200) t_obs <- c(50, 100, 150, 175)
+if (Tt == 400) t_obs <- c(75, 100, 200, 300)
+if (Tt == 800) t_obs <- c(200, 300, 500, 700)
 if (Tt == 2000) t_obs <- c(500, 1000, 1500, 1750)
+
 
 theta1_present <- TRUE
 theta2_present <- FALSE
@@ -664,6 +667,12 @@ ess_w2 <- effectiveSize(mcmc(W2_hist[-(1:burnin)]))
 printf("\tW1: %.0f", ess_w1)
 printf("\tW2: %.0f", ess_w2)
 
+ess_theta01 <- effectiveSize(mcmc(theta_01_hist[-(1:burnin)]))
+ess_theta02 <- effectiveSize(mcmc(theta_02_hist[-(1:burnin)]))
+printf("\ttheta_01: %.2f", ess_theta01)
+printf("\ttheta_02: %.2f", ess_theta02)
+
+
 ess_theta1 <- effectiveSize(mcmc(theta1_hist[-(1:burnin),]))
 ess_theta2 <- effectiveSize(mcmc(theta2_hist[-(1:burnin),]))
 printf("\ttheta1 (mean): %.2f", mean(ess_theta1))
@@ -803,6 +812,15 @@ plot(W1_hist[-(1:burnin)], type="l", xlab="n", ylab="W", main="Traceplot of W1")
 abline(v=burnin, col="red")
 plot(W2_hist[-(1:burnin)], type="l", xlab="n", ylab="W", main="Traceplot of W2")
 abline(v=burnin, col="red")
+
+
+# Traceplot for theta_01 ####
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
+plot(theta_01_hist, type="l", main="Traceplot of theta01", xlab="", ylab="")
+
+# Traceplot for theta_02 ####
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
+plot(theta_02_hist, type="l", main="Traceplot of theta01", xlab="", ylab="")
 
 
 # Traceplots for theta_t1
