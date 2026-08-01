@@ -15,24 +15,59 @@ library(invgamma)
 #graphics.off()      # close the plots
 rm(list = ls())     # clear the environment
 #cat("\014")         # clear the console
-set.seed(42)
 options(error = function() traceback(2))
 
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
-# Load the data
-source <- "poisson_sin_200"
-data   <- readRDS(paste("../data/", source, ".rds", sep=""))
-y           <- data$y
-theta1_true <- data$theta
-Tt          <- length(y)
-t_observed  <- c(50, 75, 100, 150)
 
 # Print auxiliary function
 printf <- function(...) {
-  x <- paste(sprintf(...), "\n")
-  return(cat(x))
+    x <- paste(sprintf(...), "\n")
+    return(cat(x))
 }
+
+# Load the data
+functions_grid <- c("constant","linear", "quadratic", "sinusoidal")
+
+f <- 3
+Tt <- 1600
+replica <- 1
+
+source <- sprintf("%s_%s_%s", functions_grid[f], Tt, replica)
+data <- readRDS(paste("../../../cobalebeb2027/data/simulated/", source, ".rds", sep=""))
+y <- data$y
+
+#
+# Set the seed according to the task_grid
+#
+Tt_grid <- c(200, 400, 800, 1600)
+method <- 2    # grid: (montoril, pg_apf, sir_laplace, sir_collapsed, stan)
+
+tau <- match(Tt, Tt_grid)
+seed = method*1e5 + f*1e4 + tau*1e3 + replica
+
+set.seed(seed)
+
+printf("Executing %s, seed=%d" , source, seed)
+
+if (Tt == 200) t_obs <- c(50, 100, 150, 175)
+if (Tt == 400) t_obs <- c(75, 100, 200, 300)
+if (Tt == 800) t_obs <- c(200, 300, 500, 700)
+if (Tt == 1600) t_obs <- c(400, 800, 1200, 1500)
+
+theta1_present <- TRUE
+theta2_present <- FALSE
+
+
+if (theta1_present) {
+    theta1_true <- data$theta
+    lambda_true <- exp(theta1_true)
+}
+
+if (theta2_present)
+    theta2_true <- data$theta2
+
+
 
 # Log-sum-exp
 logsumexp <- function(x) {
@@ -51,12 +86,12 @@ log_p_yt <- function(yt, theta_t1) {
 # PRIOR HYPERPARAMETERS
 
 # theta_01 ~ N(mu_01, sigma2_01)
-mu_01     <- log(y[1] + 0.5)
-sigma2_01 <- 10
+mu_01     <- 0
+sigma2_01 <- 100
 
 # theta_02 ~ N(mu_02, sigma2_02)
 mu_02     <- 0
-sigma2_02 <- 1
+sigma2_02 <- 100
 
 # W1 ~ InvGamma(alpha_W1, beta_W1)
 alpha_W1 <- 2
@@ -64,10 +99,10 @@ beta_W1  <- 0.01
 
 # W2 ~ InvGamma(alpha_W2, beta_W2)
 alpha_W2 <- 2
-beta_W2  <- 0.001
+beta_W2  <- 0.0001
 
-N      <- 5000
-K      <- 200
+N      <- 10000
+K      <- 50
 burnin <- 1000
 
 # Armazenamento
@@ -81,15 +116,14 @@ theta2_star_hist <- matrix(0, N, Tt)
 #####
 # INITIAL VALUES
 
-theta1_star <- stats::filter(log(y + 0.5), rep(1/5, 5), sides=2)
-theta1_star[is.na(theta1_star)] <- log(y[is.na(theta1_star)] + 0.5)
-theta1_star <- as.numeric(theta1_star)
-theta2_star <- c(0, diff(theta1_star))
-
-theta_01 <- log(y[1] + 0.5)
+# Initial Values
+theta1_star <- numeric(Tt)
+theta2_star <- numeric(Tt)
+theta_01 <- 0
 theta_02 <- 0
 W1 <- 0.01
-W2 <- 0.001
+W2 <- 0.01
+
 
 #####
 start_time <- proc.time()
@@ -299,14 +333,14 @@ plot(W2_hist[-(1:burnin)], type="l", xlab="n", ylab="W2",
 
 # Traceplots theta1_star
 par(mfrow=c(2,2))
-for (t in t_observed) {
+for (t in t_obs) {
   plot(theta1_star_hist[, t], type="l",
        main=bquote(theta[list(.(t),1)]), xlab="n", ylab="")
 }
 
 # Traceplots theta2_star
 par(mfrow=c(2,2))
-for (t in t_observed) {
+for (t in t_obs) {
   plot(theta2_star_hist[, t], type="l",
        main=bquote(theta[list(.(t),2)]), xlab="n", ylab="")
 }

@@ -13,26 +13,47 @@ library(coda)
 #graphics.off()     # close the plots
 #cat("\014")        # clear the console
 rm(list = ls())     # clear the environment
-set.seed(42)
+
 options(error = function() traceback(2))  # more informative traceback
 
-# Change de directory to the same of the current file
+# Change the directory to the same of the current file
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
+# Auxiliary functions
+printf <- function(...) cat(paste(sprintf(...), "\n"))
+
 # Load the data
-source <- "quadratic_2000_2"
+functions_grid <- c("constant","linear", "quadratic", "sinusoidal")
+
+f <- 3
+Tt <- 1600
+replica <- 1
+
+source <- sprintf("%s_%s_%s", functions_grid[f], Tt, replica)
 data <- readRDS(paste("../../cobalebeb2027/data/simulated/", source, ".rds", sep=""))
 y <- data$y
 
-Tt <- length(y)
+#
+# Set the seed according to the task_grid
+#
+Tt_grid <- c(200, 400, 800, 1600)
+method <- 2    # grid: (montoril, pg_apf, sir_laplace, sir_collapsed, stan)
+
+tau <- match(Tt, Tt_grid)
+seed = method*1e5 + f*1e4 + tau*1e3 + replica
+
+set.seed(seed)
+
+printf("Executing %s, seed=%d" , source, seed)
+
 if (Tt == 200) t_obs <- c(50, 100, 150, 175)
 if (Tt == 400) t_obs <- c(75, 100, 200, 300)
 if (Tt == 800) t_obs <- c(200, 300, 500, 700)
-if (Tt == 2000) t_obs <- c(500, 1000, 1500, 1750)
-
+if (Tt == 1600) t_obs <- c(400, 800, 1200, 1500)
 
 theta1_present <- TRUE
 theta2_present <- FALSE
+
 
 if (theta1_present) {
     theta1_true <- data$theta
@@ -41,9 +62,6 @@ if (theta1_present) {
 
 if (theta2_present)
     theta2_true <- data$theta2
-
-# Auxiliary functions
-printf <- function(...) cat(paste(sprintf(...), "\n"))
 
 logsumexp <- function(x) {
   cc <- max(x)
@@ -78,7 +96,7 @@ eta_02  <- 0.0001
 
 # Simulation parameters
 N <- 10000      # number of Gibbs iterations
-K <- 50          # number of particles
+K <- 50         # number of particles
 burnin <- 1000
 
 # Initial Values
@@ -190,35 +208,33 @@ for (n in 1:N) {
     sd_W2 <- sqrt(W2)
 
 
+    # Sample theta_01 (conjugated Normal)
+    # theta_01 is NOT part of the particle system: it has no likelihood term
+    # (no y_0), so its exact full conditional is available in closed form,
+    # exactly as in the bootstrap sampler and mathematically equivalent to
+    # the informed precision (1/sigma2_01 + phi1) used for node 0 in the
+    # SIR-Laplace/Collapsed extended block. Sampling it as a K=50-particle
+    # cloud from the raw N(mu_01, sigma2_01) prior (previous version) is
+    # uninformed by phi1 and collapses the first-stage APF ESS to ~4/50.
+    sigma2_01_bar <- (1/sigma2_01 + 1/W1)^(-1)
+    mu_01_bar <- sigma2_01_bar * (mu_01/sigma2_01 + (theta1[1] - theta_02)/W1)
+    theta_01 <- rnorm(1, mean = mu_01_bar, sd = sqrt(sigma2_01_bar))
+
     #
     # Conditional SMC for theta_t1
     #
     theta_1_k   <- matrix(0, Tt, K)
     log_w_tilde <- matrix(0, Tt, K)
 
-    # t = 0
-    theta_0_k <- rnorm(K, mean = mu_01, sd = sqrt(sigma2_01))
-    theta_0_k[K] <- theta_01   # reference path
-    log_w_tilde_0 <- rep(-log(K), K)  # no likelihood at t = 0 (uniform weights)
-
     # t = 1
-    # Predictor (auxiliary variable)
-    theta_hat_11_k <- theta_0_k + theta_02
-
-    # Auxiliary weights
-    log_lambda_1_k <- y[1] * theta_hat_11_k - exp(theta_hat_11_k)
-
-    # First stage resampling
-    log_aux_1 <- log_w_tilde_0 + log_lambda_1_k
-    A_1 <- sample(1:K, K, replace = TRUE, prob = exp(log_aux_1 - max(log_aux_1)))
-    A_1[K] <- K   # reference path
-
-    # Propagation
-    theta_1_k[1, ] <- rnorm(K, mean = theta_0_k[A_1] + theta_02, sd = sd_W1)
+    # theta_01 is now a fixed scalar (no particle diversity at t = 0), so
+    # there is no first-stage (auxiliary) resampling to do here -- exactly
+    # as in the bootstrap sampler's t = 1 step.
+    theta_1_k[1, ] <- rnorm(K, mean = theta_01 + theta_02, sd = sd_W1)
     theta_1_k[1, K] <- theta1[1]
 
     # Updated weights
-    log_w_1 <- log_p_yt(y[1], theta_1_k[1, ]) - log_lambda_1_k[A_1]
+    log_w_1 <- log_p_yt(y[1], theta_1_k[1, ])
     log_w_tilde[1, ] <- log_w_1 - logsumexp(log_w_1) # normalizing
 
     # t = 2, ..., T
@@ -266,20 +282,8 @@ for (n in 1:N) {
         theta1[t] <- theta_1_k[t, b]
     }
 
-    # backward sampling for theta_01
-    # Backward weights: w_0^k * N(theta1[1] | theta_0^k + theta_02, W1)
-    log_bw_0 <- log_w_tilde_0 +
-        dnorm(theta1[1],
-            mean = theta_0_k + theta_02,
-            sd = sd_W1,
-            log = TRUE
-        )
-    log_bw_0 <- log_bw_0 - max(log_bw_0)
-    bw_0 <- exp(log_bw_0)
-    bw_0 <- bw_0 / sum(bw_0)
-    b_0  <- sample(1:K, 1, prob = bw_0)
-    theta_01 <- theta_0_k[b_0]
-
+    # theta_01 was already sampled exactly (conjugated Normal, above) --
+    # no backward sampling needed for it.
 
     # (theta_02, theta2) jointly via extended block
     build2 <- chan_smoothing_theta2(theta1, phi1, phi2, mu_02, sigma2_02, theta_01)

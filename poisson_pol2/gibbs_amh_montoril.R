@@ -20,14 +20,12 @@
 #
 # Author: Cleiton Moya de Almeida
 
-library(Rfast)      # provide colMedians()
 library(coda)
 library(Matrix)
 
 #graphics.off()     # close the plots
 rm(list = ls())     # clear the environment
 #cat("\014")        # clear the console
-tp <- Matrix::t     # matrix transpose alias
 options(error = function() traceback(2)) # more informative traceback
 set.seed(42)
 

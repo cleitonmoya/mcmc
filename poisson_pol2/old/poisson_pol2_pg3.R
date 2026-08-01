@@ -15,27 +15,52 @@ set.seed(42)
 options(error = function() traceback(2))
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
+# Print auxiliary function
+printf <- function(...) {
+    x <- paste(sprintf(...), "\n")
+    return(cat(x))
+}
+
 # Load the data
-source_file <- "poisson_pol2_200"
-data <- readRDS(paste("../data/", source_file, ".rds", sep=""))
+functions_grid <- c("constant","linear", "quadratic", "sinusoidal")
+
+f <- 3
+Tt <- 1600
+replica <- 1
+
+source <- sprintf("%s_%s_%s", functions_grid[f], Tt, replica)
+data <- readRDS(paste("../../../cobalebeb2027/data/simulated/", source, ".rds", sep=""))
 y <- data$y
 
-#theta2_true <- data$theta2
-Tt          <- length(y)
-t_observed <- c(50, 100, 150, 175)
-#t_observed  <- c(250, 500, 750, 1000)
+#
+# Set the seed according to the task_grid
+#
+Tt_grid <- c(200, 400, 800, 1600)
+method <- 2    # grid: (montoril, pg_apf, sir_laplace, sir_collapsed, stan)
+
+tau <- match(Tt, Tt_grid)
+seed = method*1e5 + f*1e4 + tau*1e3 + replica
+
+set.seed(seed)
+
+printf("Executing %s, seed=%d" , source, seed)
+
+if (Tt == 200) t_obs <- c(50, 100, 150, 175)
+if (Tt == 400) t_obs <- c(75, 100, 200, 300)
+if (Tt == 800) t_obs <- c(200, 300, 500, 700)
+if (Tt == 1600) t_obs <- c(400, 800, 1200, 1500)
 
 theta1_present <- TRUE
 theta2_present <- FALSE
+
 
 if (theta1_present) {
     theta1_true <- data$theta
     lambda_true <- exp(theta1_true)
 }
 
-if (theta2_present) theta2_true <- data$theta2
-
-printf <- function(...) cat(paste(sprintf(...), "\n"))
+if (theta2_present)
+    theta2_true <- data$theta2
 
 logsumexp <- function(x) {
   cc <- max(x)
@@ -51,23 +76,23 @@ log_p_yt <- function(yt, theta_t1) {
 # Prior Hyperparameters
 
 # theta_01 ~ N(mu_01, sigma2_01)
-mu_01     <- log(y[1] + 0.5)
-sigma2_01 <- 10
+mu_01 <- 0
+sigma2_01 <- 100
 
 # theta_02 ~ N(mu_02, sigma2_02)
 mu_02     <- 0
-sigma2_02 <- 10
+sigma2_02 <- 100
 
 # W1 ~ InvGamma(alpha_W1, beta_W1)
 alpha_W1 <- 2
-beta_W1  <- 0.1
+beta_W1 <- 0.01
 
 # W2 ~ InvGamma(alpha_W2, beta_W2)
 alpha_W2 <- 2
-beta_W2  <- 0.1
+beta_W2 <- 0.0001
 
-N      <- 10000
-K      <- 200
+N <- 10000
+K <- 50
 burnin <- 1000
 
 W1_hist          <- numeric(N)
@@ -78,12 +103,13 @@ theta1_hist <- matrix(0, N, Tt)
 theta2_hist <- matrix(0, N, Tt)
 
 # Initial Values
-theta1 <- log(y + 0.5)
-theta2 <- c(diff(theta1), 0)
-theta_01 <- log(y[1] + 0.5)
-theta_02 <- y[2]-y[1]
+theta1 <- numeric(Tt)
+theta2 <- numeric(Tt)
+theta_01 <- 0
+theta_02 <- 0
 W1 <- 0.01
 W2 <- 0.01
+
 
 #####
 start_time <- proc.time()
