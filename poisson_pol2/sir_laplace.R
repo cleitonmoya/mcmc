@@ -56,6 +56,24 @@ log_p_yt <- function(yt, theta_t1) {
     return(res)
 }
 
+# Single-index draw from (unnormalized) log-weights via a single uniform
+# draw + linear scan over the NATURAL-order cumulative distribution.
+# Mirrors sample_index_from_logw() in utils.h exactly. Deliberately NOT
+# R's sample(x, 1, prob=w): base R's sample() internally sorts the
+# probabilities in decreasing order before walking the cumulative sum
+# (see src/main/random.c, ProbSampleReplace), so for the SAME uniform draw
+# it can land on a different index than a natural-order scan -- same
+# marginal distribution, different realized draw. Using this instead of
+# sample() lets the R and C++ implementations match on the same seed.
+sample_index_from_logw <- function(logw) {
+    m <- max(logw)
+    w <- exp(logw - m)
+    cum <- cumsum(w)
+    tot <- cum[length(cum)]
+    u <- runif(1) * tot
+    which(cum >= u)[1]
+}
+
 
 # Prior Hyperparameters
 
@@ -277,7 +295,7 @@ for (n in 1:N) {
         Weights[n, ] <- w
         ess_is[n] <- 1 / sum(exp(2*log_w))
 
-        idx <- sample(1:M_is, 1, prob=w)   # index for (theta_01*, theta1*)
+        idx <- sample_index_from_logw(log_w)   # index for (theta_01*, theta1*)
         theta_01 <- theta_01_trajectories[idx]
         theta1   <- trajectories[idx, ] # theta1
     } else {

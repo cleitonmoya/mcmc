@@ -1,8 +1,8 @@
-# Driver R para o amostrador PG-AS implementado em C++/Rcpp (pg_as.cpp).
-# pg_as.cpp inclui utils.h, onde ficam as funções compartilhadas com os
-# demais algoritmos (logsumexp, log_p_yt, log_dnorm, gibbs_sample_theta01/
-# phi1/phi2, reamostragem sistemática, método de Chan tridiagonal) — os
-# dois arquivos precisam estar no mesmo diretório.
+# Driver R para o amostrador SIR-Laplace implementado em C++/Rcpp
+# (sir_laplace.cpp). sir_laplace.cpp inclui utils.h, onde ficam as funções
+# compartilhadas com os demais algoritmos (logsumexp, log_p_yt, log_dnorm,
+# gibbs_sample_theta01/phi1/phi2, sample_index_from_logw, método de Chan
+# tridiagonal) — os dois arquivos precisam estar no mesmo diretório.
 
 library(Rcpp)
 library(coda)
@@ -11,11 +11,11 @@ rm(list = ls())
 options(error = function() traceback(2))
 setwd(dirname(this.path::this.path()))
 
-sourceCpp("pg_as.cpp")
+sourceCpp("sir_laplace.cpp")
 
 printf <- function(...) cat(paste(sprintf(...), "\n"))
 
-# ---- Dados (mesma lógica do script original) ----
+# Load the data
 functions_grid <- c("constant", "linear", "quadratic", "sinusoidal")
 f <- 3
 Tt <- 1600
@@ -30,7 +30,7 @@ method <- 2
 tau <- match(Tt, Tt_grid)
 seed <- method * 1e5 + f * 1e4 + tau * 1e3 + replica
 set.seed(seed)
-printf("Runninf for %s, seed=%d", source_name, seed)
+printf("Running for %s, seed=%d", source_name, seed)
 
 if (Tt == 200) t_obs <- c(50, 100, 150, 175)
 if (Tt == 400) t_obs <- c(75, 100, 200, 300)
@@ -57,22 +57,23 @@ eta_02 <- 0.0001
 
 # ---- Parâmetros da simulação ----
 N <- 10000
-K <- 30
 burnin <- 1000
+M_irls_max <- 20
+M_is <- 3
+tol <- 1e-4
 
 # ---- Valores iniciais ----
-theta1 <- log(y + 0.5)
-theta2 <- c(diff(theta1), 0)
-theta_01 <- theta1[1]
-theta_02 <- theta2[1]
-W1 <- var(diff(theta1))
-W2 <- var(diff(theta2))
+theta1 <- numeric(Tt)
+theta2 <- numeric(Tt)
+theta_01 <- 0
+theta_02 <- 0
+W1 <- 0.01
+W2 <- 0.01
 
 # ---- Execução (Gibbs em C++) ----
 start_time <- proc.time()
-out <- pg_as_cpp(
+out <- sir_laplace_cpp(
     y = y,
-    K = K,
     N = N,
     mu_01 = mu_01,
     sigma2_01 = sigma2_01,
@@ -88,6 +89,9 @@ out <- pg_as_cpp(
     theta_02 = theta_02,
     W1 = W1,
     W2 = W2,
+    M_irls_max = M_irls_max,
+    M_is = M_is,
+    tol = tol,
     verbose = TRUE,
     print_every = 1000
 )
@@ -101,7 +105,8 @@ theta_01_hist <- out$theta_01_hist
 theta_02_hist <- out$theta_02_hist
 W1_hist <- out$W1_hist
 W2_hist <- out$W2_hist
-ess_smc <- out$ess_smc
+ess_is <- out$ess_is
+itr_irls <- out$itr_irls
 
 #### Simulation summary
 
@@ -132,6 +137,7 @@ printf("\ttheta_02: %.2f", ess_theta02)
 printf("\tW1: %.0f", ess_w1)
 printf("\tW2: %.0f", ess_w2)
 printf("\ttheta1 (mean): %.2f", mean(ess_theta1))
+printf("\ttheta_11 %.2f", ess_theta1[1])
 printf("\ttheta2 (mean): %.2f", mean(ess_theta2))
 
 # Effective sample size per second
@@ -211,7 +217,6 @@ if (theta1_present) {
 
 
 # y, theta2_true, theta2_mean ####
-#y_range <- range(theta2_true, theta2_mean)
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
 if (theta2_present) {
     ylim_range <- range(theta2_mean, theta2_true)
@@ -230,19 +235,43 @@ if (theta2_present) {
 }
 
 
+# Posterior distribution of theta_t1 ####
+par(mfrow = c(2, 2))
+for (t in t_obs) {
+    hist(theta1_hist[-(1:burnin), t], breaks = 50, freq = FALSE,
+         xlab = bquote(theta[.(t) * "," * 1]),
+         main = bquote("Posterior of " * theta[.(t) * "," * 1]))
+    lines(density(theta1_hist[-(1:burnin), t]), col = "blue", lwd = 2)
+}
+
+
+# Posterior distribution of theta_t2 ####
+par(mfrow = c(2, 2))
+for (t in t_obs) {
+    hist(theta2_hist[-(1:burnin), t], breaks = 50, freq = FALSE,
+         xlab = bquote(theta[.(t) * "," * 2]),
+         main = bquote("Posterior of " * theta[.(t) * "," * 2]))
+    lines(density(theta2_hist[-(1:burnin), t]), col = "blue", lwd = 2)
+}
+
+
+# Posterior distribution of W1 ####
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
+hist(W1_hist[-(1:burnin)], breaks = 50, freq = FALSE, main = "Posterior of W1")
+lines(density(W1_hist[-(1:burnin)]), col = "blue", lwd = 2)
+
+
+# Posterior distribution of W2 ####
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
+hist(W2_hist[-(1:burnin)], breaks = 50, freq = FALSE, main = "Posterior of W2")
+lines(density(W2_hist[-(1:burnin)]), col = "blue", lwd = 2)
+
+
 # Traceplot for W1 and W2 ####
 par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex = 0.8)
-plot(W1_hist, type = "l", xlab = "n", ylab = "W", main = "Traceplot of W1")
+plot(W1_hist[-(1:burnin)], type = "l", xlab = "n", ylab = "W", main = "Traceplot of W1")
 abline(v = burnin, col = "red")
-plot(W2_hist, type = "l", xlab = "n", ylab = "W", main = "Traceplot of W2")
-abline(v = burnin, col = "red")
-
-
-# Traceplots for theta_01 e theta_02 ####
-par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex = 0.8)
-plot(theta_01_hist, type = "l", xlab = "n", ylab = "W", main = "Traceplot of theta_01")
-abline(v = burnin, col = "red")
-plot(theta_02_hist, type = "l", xlab = "n", ylab = "W", main = "Traceplot of theta_02")
+plot(W2_hist[-(1:burnin)], type = "l", xlab = "n", ylab = "W", main = "Traceplot of W2")
 abline(v = burnin, col = "red")
 
 
@@ -283,6 +312,14 @@ plot(z_theta2, type = "l", main = expression("Geweke diagnostic for " * theta[t2
 abline(h = c(-1.96, 1.96), col = "red")
 
 
+# ACF for theta1 e theta2
+par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex = 0.8) # bottom left, top, right
+for (t in t_obs) {
+    acf(theta1_hist[-(1:burnin), t], main = bquote(theta[.(t) * "," * 1]))
+    acf(theta2_hist[-(1:burnin), t], main = bquote(theta[.(t) * "," * 2]))
+}
+
+
 # Prior vs posterior for phi2
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8) # bottom left, top, right
 curve(dgamma(x, shape = nu_02, rate = eta_02), from = 0, to = max(1 / W2_hist[-(1:burnin)]),
@@ -291,7 +328,6 @@ lines(density(1 / W2_hist[-(1:burnin)]), col = "blue", lwd = 2)
 legend("topright", legend = c("Prior", "Posterior"), col = c("red", "blue"), lwd = 2)
 
 
-# Effective sample size ####
+# Effective Sample Size (IS)
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
-plot(ess_smc, type = "l", main = "Effective Sample Size - SMC")
-abline(v = burnin, col = "red")
+plot(ess_is, type = "l", main = "Effective Sample Size - IS")

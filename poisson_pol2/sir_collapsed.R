@@ -55,6 +55,24 @@ logsumexp <- function(x) {
     return(cc + log(sum(exp(x - cc))))
 }
 
+# Single-index draw from (unnormalized) log-weights via a single uniform
+# draw + linear scan over the NATURAL-order cumulative distribution.
+# Mirrors sample_index_from_logw() in utils.h exactly. Deliberately NOT
+# sample.int(M, 1, prob=w): base R's sample()/sample.int() internally sorts
+# the probabilities in decreasing order before walking the cumulative sum
+# (see src/main/random.c, ProbSampleReplace), so for the SAME uniform draw
+# it can land on a different index than a natural-order scan -- same
+# marginal distribution, different realized draw. Using this instead lets
+# the R and C++ implementations match on the same seed.
+sample_index_from_logw <- function(logw) {
+    m <- max(logw)
+    w <- exp(logw - m)
+    cum <- cumsum(w)
+    tot <- cum[length(cum)]
+    u <- runif(1) * tot
+    which(cum >= u)[1]
+}
+
 
 #####
 # Static sparse matrices for the Chan Method
@@ -291,7 +309,7 @@ sir_theta1 <- function(irls_res, y, phi1, theta2, theta_02, M_sir_theta1) {
 
     w_norm  <- exp(log_w - logsumexp(log_w))
     ess_sir <- 1 / sum(w_norm^2)
-    idx     <- sample.int(M_sir_theta1, size = 1, prob = w_norm)
+    idx     <- sample_index_from_logw(log_w)   # index for (theta_01*, theta1*)
 
     list(theta_01 = draws[idx, 1], theta1 = draws[idx, -1], ess = ess_sir)
 }

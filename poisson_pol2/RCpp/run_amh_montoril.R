@@ -1,8 +1,9 @@
-# Driver R para o amostrador PG-AS implementado em C++/Rcpp (pg_as.cpp).
-# pg_as.cpp inclui utils.h, onde ficam as funções compartilhadas com os
-# demais algoritmos (logsumexp, log_p_yt, log_dnorm, gibbs_sample_theta01/
-# phi1/phi2, reamostragem sistemática, método de Chan tridiagonal) — os
-# dois arquivos precisam estar no mesmo diretório.
+# Driver R para o amostrador AMH-Montoril implementado em C++/Rcpp
+# (amh_montoril.cpp). amh_montoril.cpp inclui utils.h, onde ficam as
+# funções compartilhadas com os demais algoritmos (logsumexp, log_p_yt,
+# log_dnorm, gibbs_sample_theta01/phi1/phi2, logpost_theta_t1/logpost_theta_T1/
+# sample_theta_t1_mh, método de Chan tridiagonal) — os dois arquivos
+# precisam estar no mesmo diretório.
 
 library(Rcpp)
 library(coda)
@@ -11,11 +12,11 @@ rm(list = ls())
 options(error = function() traceback(2))
 setwd(dirname(this.path::this.path()))
 
-sourceCpp("pg_as.cpp")
+sourceCpp("amh_montoril.cpp")
 
 printf <- function(...) cat(paste(sprintf(...), "\n"))
 
-# ---- Dados (mesma lógica do script original) ----
+# Load the data
 functions_grid <- c("constant", "linear", "quadratic", "sinusoidal")
 f <- 3
 Tt <- 1600
@@ -30,7 +31,7 @@ method <- 2
 tau <- match(Tt, Tt_grid)
 seed <- method * 1e5 + f * 1e4 + tau * 1e3 + replica
 set.seed(seed)
-printf("Runninf for %s, seed=%d", source_name, seed)
+printf("Running for %s, seed=%d", source_name, seed)
 
 if (Tt == 200) t_obs <- c(50, 100, 150, 175)
 if (Tt == 400) t_obs <- c(75, 100, 200, 300)
@@ -45,7 +46,7 @@ if (theta1_present) {
 }
 if (theta2_present) theta2_true <- data$theta2
 
-# ---- Hiperparâmetros ----
+# Prior hyperparameters
 mu_01 <- 0
 sigma2_01 <- 100
 mu_02 <- 0
@@ -55,24 +56,30 @@ eta_01 <- 0.01
 nu_02 <- 2
 eta_02 <- 0.0001
 
-# ---- Parâmetros da simulação ----
-N <- 10000
-K <- 30
+# Simulation parameters
+N <- 20000
 burnin <- 1000
+ac_ref <- 0.44
 
-# ---- Valores iniciais ----
+# Initial values
+# theta1 <- numeric(Tt)
+# theta2 <- numeric(Tt)
+# theta_01 <- 0
+# theta_02 <- 0
+# W1 <- 0.01
+# W2 <- 0.01
 theta1 <- log(y + 0.5)
 theta2 <- c(diff(theta1), 0)
 theta_01 <- theta1[1]
 theta_02 <- theta2[1]
 W1 <- var(diff(theta1))
 W2 <- var(diff(theta2))
+varsigma2 <- rep(0.02, Tt)
 
-# ---- Execução (Gibbs em C++) ----
+# Execution
 start_time <- proc.time()
-out <- pg_as_cpp(
+out <- amh_montoril_cpp(
     y = y,
-    K = K,
     N = N,
     mu_01 = mu_01,
     sigma2_01 = sigma2_01,
@@ -88,8 +95,10 @@ out <- pg_as_cpp(
     theta_02 = theta_02,
     W1 = W1,
     W2 = W2,
+    ac_ref = ac_ref,
+    varsigma2 = varsigma2,
     verbose = TRUE,
-    print_every = 1000
+    print_every = 5000
 )
 end_time <- proc.time()
 elapsed_time <- (end_time - start_time)[[1]]
@@ -101,9 +110,13 @@ theta_01_hist <- out$theta_01_hist
 theta_02_hist <- out$theta_02_hist
 W1_hist <- out$W1_hist
 W2_hist <- out$W2_hist
-ess_smc <- out$ess_smc
+ac_hist <- out$ac_hist
 
-#### Simulation summary
+
+####
+# Simulation summary
+
+printf("Mean acception ratio of theta1: %.2f", mean(ac_hist))
 
 # Posterior mean
 theta1_mean <- colMeans(theta1_hist[-(1:burnin), ])
@@ -135,12 +148,13 @@ printf("\ttheta1 (mean): %.2f", mean(ess_theta1))
 printf("\ttheta2 (mean): %.2f", mean(ess_theta2))
 
 # Effective sample size per second
-printf("Effective Sample Size / second:")
-printf("\tW1: %.2f", ess_w1 / elapsed_time)
-printf("\tW2: %.2f", ess_w2 / elapsed_time)
-
 ess_sec_theta1 <- ess_theta1 / elapsed_time
 ess_sec_theta2 <- ess_theta2 / elapsed_time
+printf("Effective Sample Size / second:")
+printf("\ttheta_01: %.2f", ess_theta01 / elapsed_time)
+printf("\ttheta_02: %.2f", ess_theta02 / elapsed_time)
+printf("\tW1: %.2f", ess_w1 / elapsed_time)
+printf("\tW2: %.2f", ess_w2 / elapsed_time)
 printf("\ttheta1 (mean): %.2f", mean(ess_sec_theta1))
 printf("\ttheta2 (mean): %.2f", mean(ess_sec_theta2))
 
@@ -211,7 +225,6 @@ if (theta1_present) {
 
 
 # y, theta2_true, theta2_mean ####
-#y_range <- range(theta2_true, theta2_mean)
 par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
 if (theta2_present) {
     ylim_range <- range(theta2_mean, theta2_true)
@@ -230,19 +243,43 @@ if (theta2_present) {
 }
 
 
+# Posterior distribution of theta_t1 ####
+par(mfrow = c(2, 2))
+for (t in t_obs) {
+    hist(theta1_hist[-(1:burnin), t], breaks = 50, freq = FALSE,
+         xlab = bquote(theta[.(t) * "," * 1]),
+         main = bquote("Posterior of " * theta[.(t) * "," * 1]))
+    lines(density(theta1_hist[-(1:burnin), t]), col = "blue", lwd = 2)
+}
+
+
+# Posterior distribution of theta_t2 ####
+par(mfrow = c(2, 2))
+for (t in t_obs) {
+    hist(theta2_hist[-(1:burnin), t], breaks = 50, freq = FALSE,
+         xlab = bquote(theta[.(t) * "," * 2]),
+         main = bquote("Posterior of " * theta[.(t) * "," * 2]))
+    lines(density(theta2_hist[-(1:burnin), t]), col = "blue", lwd = 2)
+}
+
+
+# Posterior distribution of W1 ####
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
+hist(W1_hist[-(1:burnin)], breaks = 50, freq = FALSE, main = "Posterior of W1")
+lines(density(W1_hist[-(1:burnin)]), col = "blue", lwd = 2)
+
+
+# Posterior distribution of W2 ####
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
+hist(W2_hist[-(1:burnin)], breaks = 50, freq = FALSE, main = "Posterior of W2")
+lines(density(W2_hist[-(1:burnin)]), col = "blue", lwd = 2)
+
+
 # Traceplot for W1 and W2 ####
 par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex = 0.8)
-plot(W1_hist, type = "l", xlab = "n", ylab = "W", main = "Traceplot of W1")
+plot(W1_hist[-(1:burnin)], type = "l", xlab = "n", ylab = "W", main = "Traceplot of W1")
 abline(v = burnin, col = "red")
-plot(W2_hist, type = "l", xlab = "n", ylab = "W", main = "Traceplot of W2")
-abline(v = burnin, col = "red")
-
-
-# Traceplots for theta_01 e theta_02 ####
-par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex = 0.8)
-plot(theta_01_hist, type = "l", xlab = "n", ylab = "W", main = "Traceplot of theta_01")
-abline(v = burnin, col = "red")
-plot(theta_02_hist, type = "l", xlab = "n", ylab = "W", main = "Traceplot of theta_02")
+plot(W2_hist[-(1:burnin)], type = "l", xlab = "n", ylab = "W", main = "Traceplot of W2")
 abline(v = burnin, col = "red")
 
 
@@ -260,6 +297,22 @@ for (t in t_obs) {
     plot(theta2_hist[, t], type = "l", main = bquote(theta[.(t) * "," * 2]), xlab = "", ylab = "")
     abline(v = burnin, col = "red")
 }
+
+
+# Traceplot of mean acceptance ratio of theta_t1 (over t) ####
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8) # bottom left, top, right
+plot(Rfast::rowmeans(ac_hist), type = "l", xlab = "n", ylab = "ratio",
+     main = expression("Acceptance ratio of " * theta[t * 1] * " (mean over t)"))
+abline(h = ac_ref, col = "blue", lty = 2)
+abline(v = burnin, col = "red")
+
+
+# Mean acceptance ratio of theta_t1 (over n) ####
+par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8) # bottom left, top, right
+plot(Rfast::colmeans(ac_hist[-(1:burnin), ]), type = "l", xlab = "t", ylab = "ratio", ylim = c(0.4, 0.5),
+     main = expression("Acceptance ratio of " * theta[t * 1] * " (mean over n)"))
+abline(h = ac_ref, col = "blue", lty = 2)
+abline(h = ac_ref, col = "red")
 
 
 # Effective sample size ####
@@ -289,9 +342,3 @@ curve(dgamma(x, shape = nu_02, rate = eta_02), from = 0, to = max(1 / W2_hist[-(
       main = "phi2 prior vs. posterior", col = "red", lwd = 2)
 lines(density(1 / W2_hist[-(1:burnin)]), col = "blue", lwd = 2)
 legend("topright", legend = c("Prior", "Posterior"), col = c("red", "blue"), lwd = 2)
-
-
-# Effective sample size ####
-par(mfrow = c(1, 1), mar = c(4, 4, 2, 2), cex = 0.8)
-plot(ess_smc, type = "l", main = "Effective Sample Size - SMC")
-abline(v = burnin, col = "red")
