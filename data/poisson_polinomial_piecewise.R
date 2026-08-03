@@ -3,8 +3,8 @@ rm(list = ls())     # clear the environment
 cat("\014")         # clear the console
 set.seed(42)
 
-filename1 <- "poisson_pol2_200"
-filename2 <- "poisson_pol2_2000"
+filename1 <- "poisson_pol2_200_teste"
+filename2 <- "poisson_pol2_2000_teste"
 
 gera_theta <- function(T) {
 
