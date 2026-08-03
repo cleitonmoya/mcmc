@@ -1,10 +1,24 @@
 # Poisson - 2nd Order Polynomial Dynamic Model
-# Particle Gibbs (PG) with Backward Sampling + Component-wise Gibbs for theta_t2
-# Strategy: - Auxiliary Particle Filter (APF) for theta_t1 (scalar state);
+# Particle Gibbs with Ancestral Sampling (PG-AS) + Component-wise Gibbs for theta_t2
+# Strategy: - Bootstrap Particle Filter with Ancestral Sampling for theta_t1
+#             (scalar state), reconstructed by simple Backward Tracking;
 #           - theta2 sampled via Preicison Matrix (Chan Method)
 # Reference: Andrieu, C., Doucet, A., & Holenstein, R. (2010).
 #    Particle Markov Chain Monte Carlo Methods. Journal of the Royal
 #    Statistical Society Series B: Statistical Methodology, 72(3), 269-342.
+#
+# PERFORMANCE NOTE: the resampling of the K-1 non-reference particles now
+# uses SYSTEMATIC resampling (Kitagawa, 1996; Doucet, de Freitas & Gordon,
+# 2001) instead of multinomial resampling: a single runif() draw generates
+# all K-1 indices via one monotone sweep through the cumulative weights
+# (findInterval), instead of K-1 independent draws inside sample(). This is
+# a standard, unbiased SMC resampling scheme with LOWER variance than
+# multinomial resampling (not merely a speed shortcut). The single-index
+# Ancestral Sampling draw (a_ref) is unchanged -- it was already a single
+# draw, so there is nothing to gain there. Because systematic resampling
+# consumes the RNG stream differently, results are NOT bit-identical to the
+# multinomial version for the same seed -- validated by posterior mean/ESS
+# equivalence instead.
 # Author: Cleiton Moya de Almeida
 
 library(Matrix)
@@ -13,26 +27,47 @@ library(coda)
 #graphics.off()     # close the plots
 #cat("\014")        # clear the console
 rm(list = ls())     # clear the environment
-set.seed(42)
+
 options(error = function() traceback(2))  # more informative traceback
 
-# Change de directory to the same of the current file
+# Change the directory to the same of the current file
 setwd(dirname(normalizePath(sys.frames()[[1]]$ofile)))
 
+# Auxiliary functions
+printf <- function(...) cat(paste(sprintf(...), "\n"))
+
 # Load the data
-source <- "quadratic_200_1"
+functions_grid <- c("constant","linear", "quadratic", "sinusoidal")
+
+f <- 3
+Tt <- 1600
+replica <- 1
+
+source <- sprintf("%s_%s_%s", functions_grid[f], Tt, replica)
 data <- readRDS(paste("../../cobalebeb2027/data/simulated/", source, ".rds", sep=""))
 y <- data$y
 
-Tt <- length(y)
+#
+# Set the seed according to the task_grid
+#
+Tt_grid <- c(200, 400, 800, 1600)
+method <- 2    # grid: (montoril, pg_apf, sir_laplace, sir_collapsed, stan)
+
+tau <- match(Tt, Tt_grid)
+seed = method*1e5 + f*1e4 + tau*1e3 + replica
+
+set.seed(seed)
+
+printf("Executing %s, seed=%d" , source, seed)
+
 if (Tt == 200) t_obs <- c(50, 100, 150, 175)
 if (Tt == 400) t_obs <- c(75, 100, 200, 300)
 if (Tt == 800) t_obs <- c(200, 300, 500, 700)
-if (Tt == 2000) t_obs <- c(500, 1000, 1500, 1750)
-
+if (Tt == 1600) t_obs <- c(400, 800, 1200, 1500)
 
 theta1_present <- TRUE
 theta2_present <- FALSE
+
 
 if (theta1_present) {
     theta1_true <- data$theta
@@ -42,12 +77,39 @@ if (theta1_present) {
 if (theta2_present)
     theta2_true <- data$theta2
 
-# Auxiliary functions
-printf <- function(...) cat(paste(sprintf(...), "\n"))
-
 logsumexp <- function(x) {
   cc <- max(x)
   return(cc + log(sum(exp(x - cc))))
+}
+
+# Systematic resampling (Kitagawa, 1996): draws `ndraws` indices in 1:K from
+# (unnormalized) log-weights using a SINGLE uniform draw, instead of the
+# `ndraws` independent draws that sample(..., prob=) uses internally. A
+# single u0 ~ U(0, total/ndraws) determines `ndraws` equally-spaced points
+# u_j = u0 + total*j/ndraws, located via one monotone sweep through the
+# cumulative weights (findInterval). Unbiased, lower resampling variance
+# than multinomial (Doucet, de Freitas & Gordon, 2001).
+systematic_resample <- function(logw, ndraws) {
+  K <- length(logw)
+  m <- max(logw)
+  w <- exp(logw - m)
+  cum_w <- cumsum(w)
+  total <- cum_w[K]
+  u0 <- runif(1, 0, total / ndraws)
+  u <- u0 + total * (0:(ndraws - 1)) / ndraws
+  findInterval(u, cum_w, left.open = TRUE) + 1
+}
+
+# Single-index draw from (unnormalized) log-weights via inverse-CDF, avoiding
+# the fixed per-call overhead of sample() (S3 dispatch, argument validation,
+# alias-table setup) -- R's sample() is disproportionately costly for a
+# single draw, called here T times per Gibbs iteration (backward
+# simulation / final-index / ancestral-sampling draws).
+sample_one_from_logw <- function(logw) {
+  m <- max(logw)
+  w <- exp(logw - m)
+  cum_w <- cumsum(w)
+  findInterval(runif(1, 0, cum_w[length(cum_w)]), cum_w, left.open = TRUE) + 1
 }
 
 # Log-likelihood
@@ -55,20 +117,6 @@ log_p_yt <- function(yt, theta_t1) {
   res <- yt * theta_t1 - exp(theta_t1)
   res[!is.finite(res)] <- -Inf
   return(res)
-}
-
-# Backward sampling step (shared by the t=1,...,T-1 loop and the t=0/theta_01
-# boundary): draws one particle index from the backward weights
-# w_t^k * N(theta_next | particles_t^k + drift_t, W1), and returns the
-# corresponding particle value.
-backward_sample <- function(log_w_tilde_t, particles_t, drift_t, theta_next, sd_W1) {
-    log_bw <- log_w_tilde_t +
-        dnorm(theta_next, mean = particles_t + drift_t, sd = sd_W1, log = TRUE)
-    log_bw <- log_bw - max(log_bw)
-    bw <- exp(log_bw)
-    bw <- bw / sum(bw)
-    b  <- sample(1:K, 1, prob = bw)
-    particles_t[b]
 }
 
 # Prior Hyperparameters
@@ -83,25 +131,25 @@ sigma2_02 <- 100
 
 # phi1 = 1/W1 ~ Gamma(nu_01, eta_01)
 nu_01 <- 2
-eta_01  <- 0.01
+eta_01  <- 0.1
 
 # phi2 = 1/W2 ~ Gamma(nu_02, eta_02)
 nu_02 <- 2
-eta_02  <- 0.0001
+eta_02  <- 0.01
 
 
 # Simulation parameters
-N <- 10000      # number of Gibbs iterations
-K <- 50          # number of particles
-burnin <- 2500
+N <- 3000      # number of Gibbs iterations
+K <- 30         # number of particles
+burnin <- 1000
 
 # Initial Values
-theta1 <- numeric(Tt)
-theta2 <- numeric(Tt)
-theta_01 <- 0
-theta_02 <- 0
-W1 <- 0.01
-W2 <- 0.01
+theta1 <- log(y + 0.5)
+theta2 <- c(diff(theta1), 0)
+theta_01 <- theta1[1]
+theta_02 <- theta2[1]
+W1 <- var(diff(theta1))
+W2 <- var(diff(theta2))
 
 
 # Auxiliary variables
@@ -163,19 +211,24 @@ chan_smoothing_theta2 <- function(theta1, phi1, phi2, mu_02, sigma2_02, theta_01
 }
 
 
-chan_sample_theta2 <- function(build_res) {
-    d <- Matrix::diag(build_res$ch)
-    u <- rnorm(Ttp1)
+chan_sample_from_build <- function(build, Tt) {
+
+    ch <- build$ch
+    theta_hat <- build[[1]] # theta1_hat or theta2_hat, always the first element
+
+    d <- Matrix::diag(ch)
+    u <- rnorm(Tt)
     w <- u / sqrt(d)
-    x <- as.vector(Matrix::solve(build_res$ch, w, system = "Lt"))
-    build_res$theta_hat + x
+    x <- as.vector(Matrix::solve(ch, w, system="Lt"))
+
+    return(theta_hat + x)
 }
 
 # Gibbs sampling
 start_time = proc.time() # execution time
 for (n in 1:N) {
 
-    if (n %% 1000 == 0) {
+    if (n %% 100 == 0) {
         time <- proc.time()
         elapsed_time <- (time - start_time)[[1]]
         printf("Iteration %d / %d | Elapsed CPU time: %.0f s", n, N, elapsed_time)
@@ -199,82 +252,87 @@ for (n in 1:N) {
     sd_W2 <- sqrt(W2)
 
 
+    # Sample theta_01 (conjugated Normal)
+    # theta_01 is NOT part of the particle system: it has no likelihood term
+    # (no y_0), so its exact full conditional is available in closed form,
+    # exactly as in the bootstrap sampler and mathematically equivalent to
+    # the informed precision (1/sigma2_01 + phi1) used for node 0 in the
+    # SIR-Laplace/Collapsed extended block. Sampling it as a K=50-particle
+    # cloud from the raw N(mu_01, sigma2_01) prior (previous version) is
+    # uninformed by phi1 and collapses the first-stage APF ESS to ~4/50.
+    sigma2_01_bar <- (1/sigma2_01 + 1/W1)^(-1)
+    mu_01_bar <- sigma2_01_bar * (mu_01/sigma2_01 + (theta1[1] - theta_02)/W1)
+    theta_01 <- rnorm(1, mean = mu_01_bar, sd = sqrt(sigma2_01_bar))
+
     #
-    # Conditional SMC for theta_t1
+    # Conditional SMC for theta_t1 (Bootstrap PF + Ancestral Sampling)
     #
     theta_1_k   <- matrix(0, Tt, K)
     log_w_tilde <- matrix(0, Tt, K)
-
-    # t = 0
-    theta_0_k <- rnorm(K, mean = mu_01, sd = sqrt(sigma2_01))
-    theta_0_k[K] <- theta_01   # reference path
-    log_w_tilde_0 <- rep(-log(K), K)  # no likelihood at t = 0 (uniform weights)
+    A_hist      <- matrix(0, Tt, K)   # ancestor indices, for Backward Tracking
 
     # t = 1
-    # Predictor (auxiliary variable)
-    theta_hat_11_k <- theta_0_k + theta_02
-
-    # Auxiliary weights
-    log_lambda_1_k <- y[1] * theta_hat_11_k - exp(theta_hat_11_k)
-
-    # First stage resampling
-    log_aux_1 <- log_w_tilde_0 + log_lambda_1_k
-    A_1 <- sample(1:K, K, replace = TRUE, prob = exp(log_aux_1 - max(log_aux_1)))
-    A_1[K] <- K   # reference path
-
-    # Propagation
-    theta_1_k[1, ] <- rnorm(K, mean = theta_0_k[A_1] + theta_02, sd = sd_W1)
+    # theta_01 is now a fixed scalar (no particle diversity at t = 0), so
+    # there is no first-stage (auxiliary) resampling to do here -- exactly
+    # as in the bootstrap sampler's t = 1 step.
+    theta_1_k[1, ] <- rnorm(K, mean = theta_01 + theta_02, sd = sd_W1)
     theta_1_k[1, K] <- theta1[1]
 
     # Updated weights
-    log_w_1 <- log_p_yt(y[1], theta_1_k[1, ]) - log_lambda_1_k[A_1]
+    log_w_1 <- log_p_yt(y[1], theta_1_k[1, ])
     log_w_tilde[1, ] <- log_w_1 - logsumexp(log_w_1) # normalizing
 
     # t = 2, ..., T
     for (t in 2:Tt) {
-        # Predictor (auxiliary variable)
-        theta_hat_t1_k = theta_1_k[t - 1, ] + theta2[t - 1]
+        # Resampling + propagation for the K - 1 non-reference particles
+        A <- systematic_resample(log_w_tilde[t - 1, ], K - 1)
+        theta_t1_k <- numeric(K)
+        theta_t1_k[1:(K - 1)] <- rnorm(K - 1,
+                                        mean = theta_1_k[t - 1, A] + theta2[t - 1],
+                                        sd = sd_W1)
 
-        # Auxiliary weights
-        log_lambda_k = y[t] * theta_hat_t1_k - exp(theta_hat_t1_k)
-
-        # First stage resampling
-        log_aux <- log_w_tilde[t - 1, ] + log_lambda_k
-        A <- sample(1:K, K, replace = TRUE, prob = exp(log_aux - max(log_aux)))
-        A[K] <- K   # reference path
-
-        # Propagation
-        theta_t1_k <- rnorm(K, mean=theta_1_k[t-1, A] + theta2[t-1], sd=sd_W1)
+        # Reference particle: fixed value, ancestor drawn via Ancestral Sampling
         theta_t1_k[K] <- theta1[t]
+        log_as <- log_w_tilde[t - 1, ] +
+            dnorm(theta1[t],
+                mean = theta_1_k[t - 1, ] + theta2[t - 1],
+                sd = sd_W1,
+                log = TRUE
+            )
+        log_as <- log_as - max(log_as)
+        a_ref  <- sample_one_from_logw(log_as)
+
+        A_hist[t, ] <- c(A, a_ref)
         theta_1_k[t, ] <- theta_t1_k
 
-        # Updated weights
-        log_w_t <- log_p_yt(y[t], theta_1_k[t, ]) - log_lambda_k[A]
+        # Updated weights (bootstrap: likelihood only)
+        log_w_t <- log_p_yt(y[t], theta_1_k[t, ])
         log_w_tilde[t, ] <- log_w_t - logsumexp(log_w_t)
     }
 
     ess_smc[n] <- 1 / sum(exp(2 * (log_w_tilde[Tt, ])))
 
 
-    # backward sampling for theta1
-    # Backward weights: w_t^k * N(theta1[t+1] | theta_t1^k + theta2[t], W1)
-    k_final <- sample(1:K, 1, prob = exp(log_w_tilde[Tt, ] - max(log_w_tilde[Tt, ])))
+    # backward tracking for theta1
+    # PG-AS: the genealogy already encodes the backward path, so we only
+    # need to look up the stored ancestor indices -- no Backward Simulation.
+    k_final <- sample_one_from_logw(log_w_tilde[Tt, ])
     theta1[Tt] <- theta_1_k[Tt, k_final]
 
+    b <- k_final
     for (t in (Tt - 1):1) {
-        theta1[t] <- backward_sample(log_w_tilde[t, ], theta_1_k[t, ], theta2[t], theta1[t+1], sd_W1)
+        b <- A_hist[t + 1, b]
+        theta1[t] <- theta_1_k[t, b]
     }
 
-    # backward sampling for theta_01
-    # Backward weights: w_0^k * N(theta1[1] | theta_0^k + theta_02, W1)
-    theta_01 <- backward_sample(log_w_tilde_0, theta_0_k, theta_02, theta1[1], sd_W1)
-
+    # theta_01 was already sampled exactly (conjugated Normal, above) --
+    # no backward sampling needed for it.
 
     # (theta_02, theta2) jointly via extended block
     build2 <- chan_smoothing_theta2(theta1, phi1, phi2, mu_02, sigma2_02, theta_01)
-    draw2  <- chan_sample_theta2(build2)
+    draw2 <- chan_sample_from_build(build2, Ttp1)
     theta_02 <- draw2[1]
-    theta2   <- draw2[-1]
+    theta2 <- draw2[-1]
 
     # Store the results
     theta_01_hist[n] <- theta_01
@@ -462,6 +520,13 @@ abline(v=burnin, col="red")
 plot(W2_hist, type="l", xlab="n", ylab="W", main="Traceplot of W2")
 abline(v=burnin, col="red")
 
+
+# Traceplots for theta_01 and theta_02 ####
+par(mfrow = c(2, 1), mar = c(4, 4, 2, 2), cex = 0.8)
+plot(theta_01_hist, type="l", xlab="n", ylab="W", main="Traceplot of theta_01")
+abline(v=burnin, col="red")
+plot(theta_02_hist, type="l", xlab="n", ylab="W", main="Traceplot of theta_02")
+abline(v=burnin, col="red")
 
 # Traceplots for theta_t1 ####
 par(mfrow = c(2, 2))
